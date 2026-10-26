@@ -15,6 +15,8 @@ from pathlib import Path
 import sys
 
 import numpy as np
+import pandas as pd
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT = ROOT / "report"
@@ -23,11 +25,26 @@ sys.path.insert(0, str(ROOT))
 from wakesteer.evaluation import switch_direction  # noqa: E402
 
 ABLATIONS = [  # run-name prefix (all seeds are averaged), table label, macro stem
-    ("ablation_no_symmetry", r"\ -- plain MLP (no C$_4$)", "NoSymmetry"),
-    ("ablation_myopic", r"\ -- myopic ($\gamma=0$)", "Myopic"),
+    ("gamma_0.95", r"\ -- long horizon ($\gamma$\,=\,0.95)", "LongHorizon"),
+    ("ablation_no_symmetry", r"\ -- plain MLP ($\gamma$\,=\,0.95)", "NoSymmetry"),
     ("ablation_no_powers", r"\ -- no power inputs", "NoPowers"),
     ("ablation_no_yaw_cost", r"\ -- no wear penalty", "NoYawCost"),
 ]
+GAMMA_TAGS = {0.0: "Zero", 0.5: "Half", 0.8: "PointEight", 0.95: "NinetyFive"}
+
+
+def best_validation_rewards() -> dict[float, list[float]]:
+    """Best validation reward of every symmetric run with default settings, grouped by its discount factor."""
+    out: dict[float, list[float]] = {}
+    for cfg_path in sorted(ROOT.glob("runs/*/config.yaml")):
+        if cfg_path.parent.name.startswith("_") or not (cfg_path.parent / "progress.csv").exists():
+            continue
+        c = yaml.safe_load(cfg_path.read_text())
+        if not c["ppo"].get("symmetry") or not c["env"].get("observe_powers", True) or c["env"]["yaw_cost"] != 0.005:
+            continue
+        df = pd.read_csv(cfg_path.parent / "progress.csv")
+        out.setdefault(float(c["ppo"]["gamma"]), []).append(float(df["val_reward"].max()))
+    return out
 
 
 def group_mean(main_: dict, prefix: str) -> dict | None:
@@ -105,6 +122,21 @@ def main() -> None:
             macros[f"Mismatch{key}LUT"] = fmt(mm["LUT"])
             macros[f"Mismatch{key}LUTf"] = fmt(mm["LUT_filtered"])
             macros[f"Mismatch{key}PPO"] = fmt(np.mean([mm[r] for r in runs]))
+    # Discount-factor study: chosen by best validation reward; test results per gamma.
+    main_gamma = float(yaml.safe_load((ROOT / "runs" / runs[0] / "config.yaml").read_text())["ppo"]["gamma"])
+    macros["GammaMain"] = f"{main_gamma:g}"
+    for g, rewards in best_validation_rewards().items():
+        tag = GAMMA_TAGS.get(g)
+        if tag:
+            macros[f"ValReward{tag}"] = fmt(float(np.mean(rewards)))
+    for g, tag in GAMMA_TAGS.items():
+        s = group_mean(main_, f"gamma_{g:g}" if g != 0 else "gamma_0.0")
+        if g == main_gamma:
+            s = {k: float(np.mean([main_[r][k] for r in runs])) for k in main_[runs[0]]}
+        macros[f"Gamma{tag}Gain"] = "??" if s is None else fmt(s["energy_gain_pct"])
+        macros[f"Gamma{tag}Reward"] = "??" if s is None else fmt(s["mean_reward"])
+        macros.setdefault(f"ValReward{tag}", "??")
+
     for prefix, _, stem in ABLATIONS:
         s = group_mean(main_, prefix)
         missing = s is None  # not trained yet: keep the draft compilable, with visible placeholders

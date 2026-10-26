@@ -87,7 +87,8 @@ def save(fig, name: str) -> None:
 
 
 def ppo_runs() -> list[str]:
-    return sorted(p.parent.name for p in ROOT.glob("runs/ppo_seed*/policy.pt"))
+    """The main-method runs, as evaluated by scripts/evaluate.py."""
+    return json.loads((RESULTS / "evaluation.json").read_text())["policies"]
 
 
 # --------------------------------------------------------------------------- figures
