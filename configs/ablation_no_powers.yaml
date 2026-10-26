@@ -1,0 +1,6 @@
+# Ablation: the agent does not observe the turbine power outputs
+# (only measured wind and its own yaw offsets).
+base: ppo.yaml
+name: ablation_no_powers
+env:
+  observe_powers: false

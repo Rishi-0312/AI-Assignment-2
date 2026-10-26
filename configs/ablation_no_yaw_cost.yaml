@@ -1,0 +1,5 @@
+# Ablation: no actuator-wear penalty in the reward (pure power maximisation).
+base: ppo.yaml
+name: ablation_no_yaw_cost
+env:
+  yaw_cost: 0.0

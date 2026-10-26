@@ -54,12 +54,25 @@ def _set_path(data: dict, dotted: str, value) -> None:
     data[keys[-1]] = value
 
 
+def _read_yaml(path: Path) -> dict:
+    """Read a config file; a ``base: other.yaml`` entry is loaded first and deep-merged under it."""
+    with open(path) as fh:
+        data = yaml.safe_load(fh) or {}
+    base = data.pop("base", None)
+    if base is None:
+        return data
+    merged = _read_yaml(Path(path).parent / base)
+    for key, value in data.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = {**merged[key], **value}
+        else:
+            merged[key] = value
+    return merged
+
+
 def load_config(path: str | Path | None = None, overrides: list[str] | None = None) -> ExperimentConfig:
     """Load a YAML config; ``overrides`` are ``section.key=value`` strings (value parsed as YAML)."""
-    data = {}
-    if path is not None:
-        with open(path) as fh:
-            data = yaml.safe_load(fh) or {}
+    data = _read_yaml(Path(path)) if path is not None else {}
     for item in overrides or []:
         key, _, raw = item.partition("=")
         _set_path(data, key.strip(), yaml.safe_load(raw))
