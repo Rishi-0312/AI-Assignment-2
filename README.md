@@ -54,6 +54,9 @@ python -m pytest -q                     # 15 tests, ~20 s
 ```
 
 Dependencies: `floris==4.7`, `gymnasium`, `numpy`, `torch`, `matplotlib`, `pyyaml`, `pandas`, `pytest`.
+The setup above was verified in a fresh virtual environment (PyTorch 2.14 CPU, pandas 3.1); the agents were
+trained with PyTorch 2.6. On Windows, keep the repository path short (PyTorch contains deeply nested files
+that can exceed the 260-character path limit) or enable long paths.
 
 ## Quick start — run the trained agent
 

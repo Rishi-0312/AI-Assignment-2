@@ -137,7 +137,7 @@ def fig_flow(direction=275.0, speed=8.0) -> None:
 def fig_training() -> None:
     """Validation energy gain during training (fixed validation weather)."""
     ev = json.loads((RESULTS / "evaluation.json").read_text())
-    fig, ax = plt.subplots(figsize=(COL_W, 1.55))
+    fig, ax = plt.subplots(figsize=(COL_W, 1.3))
     curves = []
     for run in ppo_runs():
         df = pd.read_csv(ROOT / "runs" / run / "progress.csv").dropna(subset=["val_gain_pct"])
@@ -168,7 +168,7 @@ def fig_sweep(speed_label="8 m/s", turbine=0) -> None:
     opt_gain = 100 * (sw["lut_optimal"] / sw["greedy"] - 1)
     ppo_gain = np.stack([100 * (sw[f"{r}_power"] / sw["greedy"] - 1) for r in runs])
 
-    fig, (a, b) = plt.subplots(2, 1, figsize=(COL_W, 2.4), sharex=True, gridspec_kw={"height_ratios": [1.1, 1]})
+    fig, (a, b) = plt.subplots(2, 1, figsize=(COL_W, 2.0), sharex=True, gridspec_kw={"height_ratios": [1.1, 1]})
     a.plot(d, opt_gain, color=C_LUT, lw=1.1, label="FLORIS-SR optimum (model-based)")
     a.plot(d, ppo_gain.mean(0), color=C_PPO, lw=1.1, label=f"PPO (mean of {len(runs)} seeds)")
     a.set_ylabel("power gain [%]")
@@ -190,7 +190,7 @@ def fig_robustness() -> None:
         return
     runs = ev["policies"]
     nz = ev["noise_robustness"]
-    fig, (a, b) = plt.subplots(1, 2, figsize=(COL_W, 1.6), gridspec_kw={"width_ratios": [1, 1.15], "wspace": 0.38})
+    fig, (a, b) = plt.subplots(1, 2, figsize=(COL_W, 1.4), gridspec_kw={"width_ratios": [1, 1.15], "wspace": 0.38})
     sig = np.array(nz["sigma_deg"])
     ppo = np.array([nz[r]["gain"] for r in runs])
     a.plot(sig, nz["LUT"]["gain"], color=C_LUT, marker="s", ms=4, label="LUT")
@@ -200,23 +200,25 @@ def fig_robustness() -> None:
     a.set_xlabel("wind-direction noise $\\sigma$ [deg]")
     a.set_ylabel("energy gain [%]")
     a.set_xticks(sig)
-    a.legend(loc="upper right")
 
     mm = ev["model_mismatch"]
     labels = list(mm)
+    short = {"GCH (training model)": "GCH\n(training)", "Cumulative-curl": "cumulative\ncurl", "GCH, TI = 10%": "GCH,\nTI = 10%"}
     x = np.arange(len(labels))
     lut_vals = [mm[k]["LUT"] for k in labels]
     ppo_vals = np.array([[mm[k][r] for r in runs] for k in labels])
     w = 0.36
-    b.bar(x - w / 2 - 0.01, lut_vals, width=w, color=C_LUT, label="LUT")
-    b.bar(x + w / 2 + 0.01, ppo_vals.mean(1), width=w, color=C_PPO, label="PPO",
+    b.bar(x - w / 2 - 0.02, lut_vals, width=w, color=C_LUT)
+    b.bar(x + w / 2 + 0.02, ppo_vals.mean(1), width=w, color=C_PPO,
           yerr=ppo_vals.std(1, ddof=1) if len(runs) > 1 else None, error_kw=dict(lw=0.8, capsize=2, ecolor=INK2))
     b.axhline(0, color=AXIS, lw=0.6)
     b.set_xticks(x)
-    b.set_xticklabels([lbl.replace(" (training model)", "\n(train)").replace(", ", "\n") for lbl in labels])
+    b.set_xticklabels([short.get(lbl, lbl) for lbl in labels], fontsize=6.3)
     b.set_ylabel("energy gain [%]")
     b.grid(axis="x", visible=False)
-    b.legend(loc="upper right")
+    handles, names = a.get_legend_handles_labels()
+    fig.legend(handles, [f"{n} (built with GCH, TI 6%)" if n == "LUT" else f"{n} (trained with GCH, TI 6%)" for n in names],
+               loc="lower center", bbox_to_anchor=(0.5, 0.92), ncol=2)
     save(fig, "fig_robustness")
 
 
@@ -236,6 +238,37 @@ def fig_direction() -> None:
     ax.set_ylabel("energy gain [%]")
     ax.legend(loc="upper left", ncol=2)
     save(fig, "fig_direction")
+
+
+def switch_direction(wd, yaw, window=(262.0, 278.0)):
+    """Wind direction at which the yaw offset changes sign inside ``window`` (linear interpolation)."""
+    wd, yaw = np.asarray(wd), np.asarray(yaw)
+    inside = np.flatnonzero((wd >= window[0]) & (wd <= window[1]))
+    for i, j in zip(inside[:-1], inside[1:]):
+        if np.sign(yaw[i]) != np.sign(yaw[j]) and yaw[i] != 0:
+            return float(wd[i] + (wd[j] - wd[i]) * yaw[i] / (yaw[i] - yaw[j]))
+    return None
+
+
+def fig_hysteresis(turbine=0) -> None:
+    """T1 yaw offset while the wind veers slowly (0.5 deg/min, noise-free) through the 270 deg alignment."""
+    ev = json.loads((RESULTS / "evaluation.json").read_text())
+    if "hysteresis" not in ev:
+        return
+    hy = ev["hysteresis"]
+    run = ev["policies"][0]
+    fig, ax = plt.subplots(figsize=(COL_W, 1.6))
+    for name, col, lbl in [("LUT", C_LUT, "LUT"), (run, C_PPO, "PPO")]:
+        for leg, ls in [("forward", "-"), ("backward", (0, (3, 1.5)))]:
+            d = hy[name][leg]
+            ax.plot(d["wind_direction"], np.array(d["yaw_offsets"])[:, turbine], color=col, ls=ls,
+                    label=f"{lbl}, wind veering {'right' if leg == 'forward' else 'left'}")
+    ax.axvline(270, color=AXIS, lw=0.6)
+    ax.set_xlabel("wind direction [deg] (slow veer, 0.5 deg/min, U = 8 m/s)")
+    ax.set_ylabel(f"yaw offset T{turbine + 1} [deg]")
+    ax.set_xlim(250, 290)
+    ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0), borderaxespad=0.0)
+    save(fig, "fig_hysteresis")
 
 
 def fig_episode() -> None:
@@ -272,6 +305,7 @@ def main() -> None:
     fig_robustness()
     fig_direction()
     fig_episode()
+    fig_hysteresis()
     fig_flow()
 
 

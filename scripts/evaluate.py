@@ -26,7 +26,7 @@ sys.path.insert(0, str(ROOT))
 from wakesteer.config import config_from_dict  # noqa: E402
 from wakesteer.controllers import GreedyController, LUTController, PolicyController, RandomController  # noqa: E402
 from wakesteer.env import WakeSteeringVecEnv  # noqa: E402
-from wakesteer.evaluation import rollout, steady_state_sweep, summarize  # noqa: E402
+from wakesteer.evaluation import rollout, static_wind, steady_state_sweep, summarize  # noqa: E402
 from wakesteer.farm import GreedyReference, make_floris_model, make_simulator  # noqa: E402
 from wakesteer.lut import load_or_build_lut, serial_refine  # noqa: E402
 from wakesteer.ppo import load_policy  # noqa: E402
@@ -65,6 +65,7 @@ def main() -> None:
     parser.add_argument("--policies", nargs="*", default=None, help="policy files (default: runs/ppo_seed*/policy.pt)")
     parser.add_argument("--ablations", nargs="*", default=None, help="extra policies evaluated in the main test only")
     parser.add_argument("--episodes", type=int, default=512)
+    parser.add_argument("--robust-episodes", type=int, default=256, help="episodes per robustness setting")
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--quick", action="store_true", help="skip the robustness studies")
     args = parser.parse_args()
@@ -178,6 +179,29 @@ def main() -> None:
     np.savez_compressed(RESULTS / "example_episodes.npz",
                         **{f"{c}_{key}": ex[c][key] for c in ex for key in ex_keys + ("reward",)})
 
+    # --------------------------------------------- hysteresis: slow veer through 270 deg
+    # Noise-free wind veering at a constant 0.5 deg/min, forward (240 -> 300) and backward.
+    ramp_rate, span = 0.5, (240.0, 300.0)
+    steps = int((span[1] - span[0]) / ramp_rate)
+    ramp_wind = replace(static_wind(cfg.wind), direction_persistence=1.0)
+    hyst = {"rate_deg_per_min": ramp_rate}
+    for label, start, rate in [("forward", span[0], ramp_rate), ("backward", span[1], -ramp_rate)]:
+        for name, ctrl, pcfg in [("LUT", LUTController(lut), cfg)] + [
+            (n, PolicyController(m), c) for n, (m, c) in policies.items()
+        ]:
+            env_h = WakeSteeringVecEnv(1, pcfg.farm, ramp_wind, replace(pcfg.env, episode_length=steps,
+                                       random_initial_offsets=False), sim, ref)
+            obs = env_h.reset(seed=0, initial_offsets=0.0, directions=start, speeds=8.0)
+            env_h.wind.trend[:] = rate
+            wd, yaw = [], []
+            done = False
+            while not done:
+                obs, _, done, info = env_h.step(ctrl(obs, env_h))
+                wd.append(float(info["wind_direction"][0]))
+                yaw.append(info["yaw_offsets"][0].tolist())
+            hyst.setdefault(name, {})[label] = {"wind_direction": wd, "yaw_offsets": yaw}
+    report["hysteresis"] = hyst
+
     # ------------------------------------------------------ decision time
     model = policies[first][0]
     obs = torch.zeros(1, model.obs_dim)
@@ -203,7 +227,7 @@ def main() -> None:
     if not args.quick:
         # ---------------------------------------- robustness: measurement noise
         t0 = time.perf_counter()
-        n_rob = max(128, args.episodes // 2)
+        n_rob = args.robust_episodes
         noise = {"sigma_deg": [0.0, 2.0, 4.0, 6.0]}
         for sigma in noise["sigma_deg"]:
             wind = replace(cfg.wind, direction_noise=sigma)
