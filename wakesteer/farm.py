@@ -63,6 +63,27 @@ def load_turbine(name: str) -> dict:
         return yaml.safe_load(fh)
 
 
+def rotation_permutation(x, y, angle_deg: float = 90.0, tol: float = 1e-6):
+    """Turbine relabelling induced by rotating the layout counter-clockwise about its centroid.
+
+    Returns ``pi`` with turbine ``i`` landing on the position of turbine
+    ``pi[i]``, or ``None`` if the layout is not invariant under the rotation.
+    FLORIS computes wakes in a wind-aligned frame, so for an invariant layout
+    the farm at wind direction ``theta`` behaves exactly like the farm at
+    ``theta - angle_deg`` with turbine ``i`` relabelled ``pi[i]``.
+    """
+    x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+    a = np.deg2rad(angle_deg)
+    cx, cy = x.mean(), y.mean()
+    xr = cx + np.cos(a) * (x - cx) - np.sin(a) * (y - cy)
+    yr = cy + np.sin(a) * (x - cx) + np.cos(a) * (y - cy)
+    dist = np.hypot(xr[:, None] - x[None, :], yr[:, None] - y[None, :])
+    if not np.all(dist.min(axis=1) < tol * max(1.0, np.ptp(x), np.ptp(y))):
+        return None
+    pi = dist.argmin(axis=1)
+    return pi if len(set(pi.tolist())) == len(pi) else None
+
+
 def make_floris_model(cfg: FarmConfig):
     from floris import FlorisModel
 
@@ -106,6 +127,7 @@ class FarmSimulator:
         self.layout_x = np.asarray(self.model.layout_x, dtype=float)
         self.layout_y = np.asarray(self.model.layout_y, dtype=float)
         self.n_turbines = len(self.layout_x)
+        self.c4_permutation = rotation_permutation(self.layout_x, self.layout_y, 90.0)
 
     def turbine_powers(self, wind_directions, wind_speeds, yaw_angles) -> np.ndarray:
         """Turbine powers [W] with shape (n, n_turbines).

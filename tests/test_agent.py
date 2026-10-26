@@ -41,6 +41,49 @@ def test_policy_actions_are_bounded():
         assert a.shape == (64, 9) and np.all(np.abs(a) <= 1.0)
 
 
+C4_PERM = [2, 5, 8, 1, 4, 7, 0, 3, 6]  # 90-degree CCW rotation of the 3x3 grid (row-major indices)
+
+
+def test_rotation_permutation_of_grid_layouts():
+    from wakesteer.farm import rotation_permutation
+
+    xs, ys = np.meshgrid(np.arange(3) * 630.0, np.arange(3) * 630.0)
+    assert rotation_permutation(xs.ravel(), ys.ravel()).tolist() == C4_PERM
+    xs, ys = np.meshgrid(np.arange(3) * 630.0, np.arange(2) * 630.0)  # 2x3 grid: not C4-symmetric
+    assert rotation_permutation(xs.ravel(), ys.ravel()) is None
+
+
+def test_symmetric_policy_is_rotation_equivariant():
+    torch.manual_seed(0)
+    model = ActorCritic(22, 9, symmetry_perm=C4_PERM)
+    with torch.no_grad():  # make the actor non-trivial (default init outputs ~0)
+        model.actor[-1].weight.normal_(0.0, 0.5)
+    rng = np.random.default_rng(0)
+    theta = rng.uniform(0, 360, 256)
+    feats = rng.uniform(-1, 1, (256, 18))
+    obs = np.column_stack([np.sin(np.deg2rad(theta)), np.cos(np.deg2rad(theta)), rng.normal(size=(256, 2)), feats])
+    # Same physical situation: wind rotated by -90 deg, turbine i relabelled C4_PERM[i].
+    inv = np.argsort(C4_PERM)
+    rot = np.column_stack([np.sin(np.deg2rad(theta - 90)), np.cos(np.deg2rad(theta - 90)), obs[:, 2:4],
+                           feats[:, :9][:, inv], feats[:, 9:][:, inv]]).astype(np.float32)
+    obs = obs.astype(np.float32)
+    a, a_rot = model.act(obs), model.act(rot)
+    assert np.abs(a).max() > 0.05
+    assert np.allclose(a_rot[:, C4_PERM], a, atol=1e-5)
+    with torch.no_grad():
+        assert torch.allclose(model.value(torch.as_tensor(rot)), model.value(torch.as_tensor(obs)), atol=1e-5)
+
+
+def test_symmetric_policy_roundtrip(tmp_path):
+    cfg = config_to_dict(load_config())
+    model = ActorCritic(22, 9, symmetry_perm=C4_PERM, sector_start=15.0)
+    save_policy(model, tmp_path / "s.pt", cfg)
+    loaded, _ = load_policy(tmp_path / "s.pt")
+    obs = np.random.default_rng(2).normal(size=(8, 22)).astype(np.float32)
+    assert loaded.symmetry_perm == C4_PERM
+    assert np.allclose(model.act(obs), loaded.act(obs))
+
+
 def test_lut_nearest_direction_and_linear_speed():
     dirs, speeds = np.arange(0.0, 360.0, 1.0), np.array([6.0, 8.0])
     offsets = np.zeros((360, 2, 2))

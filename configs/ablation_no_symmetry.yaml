@@ -1,0 +1,6 @@
+# Ablation: plain MLP policy without the C4 (90-degree rotation) canonicalisation;
+# the network has to learn the whole wind rose instead of one 90-degree sector.
+base: ppo.yaml
+name: ablation_no_symmetry
+ppo:
+  symmetry: false

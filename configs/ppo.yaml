@@ -52,3 +52,5 @@ ppo:
   hidden_sizes: [256, 256]
   log_std_init: -0.7
   direction_harmonics: [2, 3, 4, 8]
+  symmetry: true              # exact C4 rotation equivariance of the square-grid farm
+  sector_start: 15.0          # canonical wind sector [15, 105) deg (cut where steering gains ~0)

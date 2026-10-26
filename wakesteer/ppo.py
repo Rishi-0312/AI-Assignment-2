@@ -11,6 +11,11 @@ Implementation notes
 * The wind direction enters the network through Fourier features
   sin(k*theta), cos(k*theta): wake interactions in a grid farm repeat every
   45-90 degrees, which low-order sin/cos inputs alone represent poorly.
+* Optional exact C4 symmetry: a square-grid farm looks identical after a
+  90-degree rotation, so observations are rotated into one canonical 90-degree
+  wind sector (turbine features permuted accordingly), the networks act there,
+  and the yaw commands are permuted back.  The policy is equivariant by
+  construction and only has to learn a quarter of the wind rose.
 """
 
 from __future__ import annotations
@@ -43,6 +48,8 @@ class PPOConfig:
     hidden_sizes: tuple[int, ...] = (256, 256)
     log_std_init: float = -0.7
     direction_harmonics: tuple[int, ...] = (2, 3, 4, 8)
+    symmetry: bool = False  # C4-equivariant policy (needs a layout invariant under 90-degree rotation)
+    sector_start: float = 15.0  # [deg] start of the canonical 90-degree wind sector
 
 
 def _mlp(in_dim: int, out_dim: int, hidden: tuple[int, ...], out_gain: float) -> nn.Sequential:
@@ -79,30 +86,84 @@ class DirectionFeatures(nn.Module):
         return torch.cat([obs, torch.sin(kt), torch.cos(kt)], dim=-1)
 
 
+class C4Canonicalizer(nn.Module):
+    """Maps observations to a canonical 90-degree wind sector and actions back.
+
+    ``perm`` is the turbine relabelling of a 90-degree counter-clockwise layout
+    rotation (see :func:`wakesteer.farm.rotation_permutation`): the farm at
+    wind direction theta is physically identical to the farm at theta - 90k
+    with turbine i relabelled perm^k(i).  Observation layout: [sin, cos,
+    speed, trend, then blocks of one value per turbine].
+    """
+
+    def __init__(self, perm, obs_dim: int, sector_start: float = 15.0):
+        super().__init__()
+        perm = np.asarray(perm, dtype=np.int64)
+        n = len(perm)
+        powers = [np.arange(n)]
+        for _ in range(3):
+            powers.append(perm[powers[-1]])  # perm^k = perm o perm^(k-1)
+        inverse = [np.argsort(p) for p in powers]
+        self.register_buffer("fwd", torch.as_tensor(np.stack(powers)))
+        self.register_buffer("inv", torch.as_tensor(np.stack(inverse)))
+        self.n_turbines = n
+        self.n_blocks = (obs_dim - 4) // n
+        self.sector_start = float(sector_start)
+
+    def forward(self, obs: torch.Tensor):
+        theta = torch.rad2deg(torch.atan2(obs[:, 0], obs[:, 1]))
+        k = torch.floor(torch.remainder(theta - self.sector_start, 360.0) / 90.0).long().clamp_(0, 3)
+        theta_c = torch.deg2rad(theta - 90.0 * k)
+        idx = self.inv[k]  # canonical slot j takes original turbine inv[k][j]
+        n = self.n_turbines
+        blocks = [obs[:, 4 + b * n : 4 + (b + 1) * n].gather(1, idx) for b in range(self.n_blocks)]
+        obs_c = torch.cat([torch.sin(theta_c)[:, None], torch.cos(theta_c)[:, None], obs[:, 2:4], *blocks], dim=1)
+        return obs_c, k
+
+    def to_env(self, x: torch.Tensor, k: torch.Tensor) -> torch.Tensor:
+        """Per-turbine canonical outputs -> original turbine order."""
+        return x.gather(1, self.fwd[k])
+
+
 class ActorCritic(nn.Module):
-    def __init__(self, obs_dim: int, act_dim: int, hidden=(256, 256), log_std_init=-0.7, harmonics=(2, 3, 4, 8)):
+    def __init__(self, obs_dim: int, act_dim: int, hidden=(256, 256), log_std_init=-0.7, harmonics=(2, 3, 4, 8),
+                 symmetry_perm=None, sector_start: float = 15.0):
         super().__init__()
         self.obs_dim, self.act_dim = obs_dim, act_dim
+        self.symmetry_perm = None if symmetry_perm is None else [int(i) for i in symmetry_perm]
+        self.sector_start = float(sector_start)
+        self.canon = None if symmetry_perm is None else C4Canonicalizer(symmetry_perm, obs_dim, sector_start)
         self.features = DirectionFeatures(tuple(harmonics))
         in_dim = obs_dim + self.features.extra_dim
         self.actor = _mlp(in_dim, act_dim, tuple(hidden), out_gain=0.01)  # starts near zero offsets = greedy
         self.critic = _mlp(in_dim, 1, tuple(hidden), out_gain=1.0)
         self.log_std = nn.Parameter(torch.full((act_dim,), float(log_std_init)))
 
+    def _encode(self, obs: torch.Tensor):
+        if self.canon is None:
+            return self.features(obs), None
+        obs_c, k = self.canon(obs)
+        return self.features(obs_c), k
+
+    def _mean_std(self, obs: torch.Tensor):
+        x, k = self._encode(obs)
+        mean = self.actor(x)
+        std = self.log_std.exp().expand_as(mean)
+        if k is not None:
+            mean, std = self.canon.to_env(mean, k), self.canon.to_env(std, k)
+        return mean, std
+
     def distribution(self, obs: torch.Tensor) -> Normal:
-        mean = self.actor(self.features(obs))
-        return Normal(mean, self.log_std.exp().expand_as(mean))
+        return Normal(*self._mean_std(obs))
 
     def value(self, obs: torch.Tensor) -> torch.Tensor:
-        return self.critic(self.features(obs)).squeeze(-1)
+        return self.critic(self._encode(obs)[0]).squeeze(-1)
 
     @torch.no_grad()
     def act(self, obs: np.ndarray, deterministic: bool = True) -> np.ndarray:
         obs_t = torch.as_tensor(obs, dtype=torch.float32)
-        if deterministic:
-            a = self.actor(self.features(obs_t))
-        else:
-            a = self.distribution(obs_t).sample()
+        mean, std = self._mean_std(obs_t)
+        a = mean if deterministic else Normal(mean, std).sample()
         return a.clamp(-1.0, 1.0).numpy()
 
     def actor_parameters(self):
@@ -132,7 +193,13 @@ class PPO:
     def __init__(self, env, cfg: PPOConfig, seed: int = 0):
         self.env, self.cfg = env, cfg
         torch.manual_seed(seed)
-        self.model = ActorCritic(env.obs_dim, env.act_dim, cfg.hidden_sizes, cfg.log_std_init, cfg.direction_harmonics)
+        perm = None
+        if cfg.symmetry:
+            perm = env.sim.c4_permutation
+            if perm is None:
+                raise ValueError("ppo.symmetry=True needs a farm layout that is invariant under 90-degree rotation")
+        self.model = ActorCritic(env.obs_dim, env.act_dim, cfg.hidden_sizes, cfg.log_std_init, cfg.direction_harmonics,
+                                 symmetry_perm=perm, sector_start=cfg.sector_start)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=cfg.learning_rate, eps=1e-5)
         self.batch_size = cfg.n_envs * cfg.n_steps
         self.n_iterations = max(1, cfg.total_steps // self.batch_size)
@@ -300,6 +367,8 @@ def save_policy(model: ActorCritic, path, config: dict, meta: dict | None = None
             "act_dim": model.act_dim,
             "hidden_sizes": list(config["ppo"]["hidden_sizes"]),
             "direction_harmonics": list(config["ppo"]["direction_harmonics"]),
+            "symmetry_perm": model.symmetry_perm,
+            "sector_start": model.sector_start,
             "config": config,
             "meta": meta or {},
         },
@@ -313,6 +382,8 @@ def load_policy(path) -> tuple[ActorCritic, dict]:
     model = ActorCritic(
         payload["obs_dim"], payload["act_dim"], tuple(payload["hidden_sizes"]),
         harmonics=tuple(payload["direction_harmonics"]),
+        symmetry_perm=payload.get("symmetry_perm"),
+        sector_start=payload.get("sector_start", 15.0),
     )
     model.load_state_dict(payload["state_dict"])
     model.eval()
