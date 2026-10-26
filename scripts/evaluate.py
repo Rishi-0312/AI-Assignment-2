@@ -148,7 +148,25 @@ def main() -> None:
         "yaw_travel_mean": float(np.mean(ppo_travel)),
         "mean_reward_mean": float(np.mean([report["main"][n]["mean_reward"] for n in policies])),
     }
-    print(f"main test done ({time.perf_counter() - t0:.0f}s)")
+    # Paired comparison with the model-based baselines (identical weather in every episode).  Per-episode
+    # energy differences are expressed in % of the mean greedy episode energy, so their mean equals the
+    # difference of the energy gains in the table (energy-weighted, like the table).
+    greedy_energy = greedy["farm_power"].sum(axis=0)
+
+    def episode_excess(tr):
+        return 100.0 * (tr["farm_power"].sum(axis=0) - greedy_energy) / greedy_energy.mean()
+
+    report["paired_vs_baselines"] = {}
+    for base in ("LUT", "LUT_filtered"):
+        diffs = np.stack([episode_excess(trajs[name]) - episode_excess(trajs[base]) for name in policies])
+        d = diffs.mean(axis=0)  # average over seeds, per episode
+        report["paired_vs_baselines"][base] = {
+            "mean_diff_pct_points": float(d.mean()),
+            "sem_pct_points": float(d.std(ddof=1) / np.sqrt(len(d))),
+            "episodes_ppo_better_pct": float(100.0 * (diffs > 0).mean()),
+            "episodes_ppo_worse_pct": float(100.0 * (diffs < 0).mean()),
+        }
+    print(f"main test done ({time.perf_counter() - t0:.0f}s); paired: {report['paired_vs_baselines']}")
     for name, s in report["main"].items():
         print(f"  {name:28s} power {s['mean_power_MW']:6.3f} MW  gain {s['energy_gain_pct']:+6.2f}% "
               f"(+-{s['energy_gain_pct_sem']:.2f})  travel {s['yaw_travel_deg_per_turbine_h']:5.0f} deg/h  "

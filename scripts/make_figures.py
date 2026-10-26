@@ -105,7 +105,7 @@ def fig_flow(direction=275.0, speed=8.0) -> None:
     panels = [("Greedy", np.zeros(fm.n_turbines)), ("PPO agent", sweep[f"{run}_offsets"][i])]
     xlim, ylim = (-250, 2150), (-330, 1590)
 
-    fig, axes = plt.subplots(1, 2, figsize=(COL_W, 1.5), sharey=True, gridspec_kw={"wspace": 0.08})
+    fig, axes = plt.subplots(1, 2, figsize=(COL_W, 1.38), sharey=True, gridspec_kw={"wspace": 0.08})
     powers = []
     for ax, (title, yaw) in zip(axes, panels):
         fm.set(wind_directions=[direction], wind_speeds=[speed], turbulence_intensities=[cfg.farm.turbulence_intensity],
@@ -166,7 +166,7 @@ def fig_training() -> None:
     lut = ev["validation_reference"]["LUT"]
     runs = [r for r in training_runs() if r["default"]]
     main_gamma = yaml_gamma(ROOT / "runs" / ppo_runs()[0] / "config.yaml")
-    fig, (a, b) = plt.subplots(1, 2, figsize=(COL_W, 1.45), sharey=True, gridspec_kw={"wspace": 0.08})
+    fig, (a, b) = plt.subplots(1, 2, figsize=(COL_W, 1.22), sharey=True, gridspec_kw={"wspace": 0.08})
 
     sym = [r for r in runs if r["symmetry"] and r["gamma"] == 0.95]
     plain = [r for r in runs if not r["symmetry"] and r["gamma"] == 0.95]
@@ -208,16 +208,16 @@ def fig_sweep(speed_label="8 m/s", turbine=0) -> None:
     opt_gain = 100 * (sw["lut_optimal"] / sw["greedy"] - 1)
     ppo_gain = np.stack([100 * (sw[f"{r}_power"] / sw["greedy"] - 1) for r in runs])
 
-    fig, (a, b) = plt.subplots(2, 1, figsize=(COL_W, 2.0), sharex=True, gridspec_kw={"height_ratios": [1.1, 1]})
+    fig, (a, b) = plt.subplots(2, 1, figsize=(COL_W, 1.7), sharex=True, gridspec_kw={"height_ratios": [1.1, 1]})
     a.plot(d, opt_gain, color=C_LUT, lw=1.1, label="FLORIS-SR optimum (model-based)")
     a.plot(d, ppo_gain.mean(0), color=C_PPO, lw=1.1, label=f"PPO (mean of {len(runs)} seeds)")
-    a.set_ylabel("power gain [%]")
+    a.set_ylabel("gain [%]")
     a.legend(loc="lower left", bbox_to_anchor=(0.0, 1.0), ncol=2, borderaxespad=0.1)
     a.set_ylim(bottom=min(-1.0, float(ppo_gain.mean(0).min()) - 0.5), top=float(opt_gain.max()) * 1.08)
 
     b.plot(d, sw["lut_offsets"][:, turbine], color=C_LUT, lw=1.1)
     b.plot(d, sw[f"{runs[0]}_offsets"][:, turbine], color=C_PPO, lw=1.1)
-    b.set_ylabel(f"yaw offset T{turbine + 1} [deg]")
+    b.set_ylabel(f"T{turbine + 1} yaw [deg]")
     b.set_xlabel(f"wind direction [deg]  (U = {speed_label}, constant)")
     b.set_xticks(np.arange(0, 361, 45))
     b.set_xlim(0, 359)
@@ -230,7 +230,7 @@ def fig_robustness() -> None:
         return
     runs = ev["policies"]
     nz = ev["noise_robustness"]
-    fig, (a, b) = plt.subplots(1, 2, figsize=(COL_W, 1.4), gridspec_kw={"width_ratios": [1, 1.15], "wspace": 0.38})
+    fig, (a, b) = plt.subplots(1, 2, figsize=(COL_W, 1.15), gridspec_kw={"width_ratios": [1, 1.15], "wspace": 0.38})
     sig = np.array(nz["sigma_deg"])
     ppo = np.array([nz[r]["gain"] for r in runs])
     a.plot(sig, nz["LUT"]["gain"], color=C_LUT, marker="s", ms=4, label="LUT")

@@ -74,13 +74,14 @@ def main() -> None:
         "NumSeeds": f"{len(runs)}",
         "GainLUT": fmt(main_["LUT"]["energy_gain_pct"]),
         "GainPPO": fmt(agg["energy_gain_pct_mean"]),
-        "GainPPOstd": fmt(agg["energy_gain_pct_std"]),
+        "GainPPOstd": fmt(agg["energy_gain_pct_std"], 3),
         "GainPPOoverLUT": fmt(100 * (agg["energy_gain_pct_mean"] / main_["LUT"]["energy_gain_pct"] - 1), 0),
         "TravelGreedy": fmt(main_["Greedy"]["yaw_travel_deg_per_turbine_h"], 0),
         "TravelLUT": fmt(main_["LUT"]["yaw_travel_deg_per_turbine_h"], 0),
         "TravelPPO": fmt(agg["yaw_travel_mean"], 0),
         "TravelCutVsLUT": fmt(100 * (1 - agg["yaw_travel_mean"] / main_["LUT"]["yaw_travel_deg_per_turbine_h"]), 0),
         "PowerGreedy": fmt(main_["Greedy"]["mean_power_MW"]),
+        "GainRandomAbs": fmt(abs(main_["Random"]["energy_gain_pct"])),
         "SwitchLUT": fmt(main_["LUT"]["side_switches_per_turbine_h"], 1),
         "GainLUTf": fmt(main_["LUT_filtered"]["energy_gain_pct"]),
         "TravelLUTf": fmt(main_["LUT_filtered"]["yaw_travel_deg_per_turbine_h"], 0),
@@ -97,6 +98,11 @@ def main() -> None:
         "DecisionSR": fmt(ev["decision_time_ms"]["serial_refine_one_condition"], 0),
         "ValLUT": fmt(ev["validation_reference"]["LUT"]),
     }
+    for base, tag in (("LUT", "LUT"), ("LUT_filtered", "LUTf")):
+        p = ev["paired_vs_baselines"][base]
+        macros[f"Paired{tag}Diff"] = fmt(p["mean_diff_pct_points"])
+        macros[f"Paired{tag}SEM"] = fmt(p["sem_pct_points"], 3)
+        macros[f"Paired{tag}Better"] = fmt(p["episodes_ppo_better_pct"], 0)
     if "hysteresis" in ev:  # slow veer through 270 deg: where does T1 change deflection side?
         def band(name):
             h = ev["hysteresis"][name]
@@ -158,7 +164,7 @@ def main() -> None:
         return " & ".join(cells) + r" \\"
 
     alpha = ev["filtered_lut_tuning"]["alpha"]
-    lines = [row("Greedy (baseline)", main_["Greedy"]), row("Random", main_["Random"]),
+    lines = [row("Greedy (baseline)", main_["Greedy"]),  # random set-points are quoted in the text only
              row("LUT (FLORIS-SR)", main_["LUT"]), row(f"LUT + filter ($\\alpha$={alpha:g})", main_["LUT_filtered"]),
              r"\midrule"]
     g, gs = ppo("energy_gain_pct")
@@ -166,7 +172,7 @@ def main() -> None:
     sw, _ = ppo("side_switches_per_turbine_h")
     r, _ = ppo("mean_reward")
     lines.append(" & ".join(f"\\textbf{{{c}}}" for c in [
-        f"PPO (ours, {len(runs)} seeds)", f"{fmt(g, sign=True)}$\\pm${fmt(gs)}", f"{fmt(t, 0)}$\\pm${fmt(ts, 0)}",
+        f"PPO (ours, {len(runs)} seeds)", f"{fmt(g, sign=True)}$\\pm${fmt(gs, 3)}", f"{fmt(t, 0)}$\\pm${fmt(ts, 0)}",
         fmt(sw, 1), fmt(r, sign=True)]) + r" \\")
     for prefix, label, _ in ABLATIONS:
         s = group_mean(main_, prefix)
@@ -191,7 +197,8 @@ def main() -> None:
     for prefix, label, _ in ABLATIONS:
         s = group_mean(main_, prefix)
         if s is not None:
-            md.append(md_row("ablation: " + label.replace(r"\ -- ", "").replace("C$_4$", "C4").replace(r"$\gamma=0$", "γ = 0"), s))
+            plain = label.replace(r"\ -- ", "").replace(r"$\gamma$\,=\,", "γ = ").replace("C$_4$", "C4")
+            md.append(md_row("ablation: " + plain, s))
     (ROOT / "results" / "results_table.md").write_text("\n".join(md) + "\n", encoding="utf-8")
     print(f"wrote {len(macros)} macros and {len(lines)} table rows")
     for k, v in macros.items():
