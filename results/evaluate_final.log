@@ -1,0 +1,44 @@
+﻿filtered-LUT tuning (39s): {0.15: 0.22842226389317932, 0.25: 0.6300288560452031, 0.4: 0.8677124028043386, 0.6: 0.9493444359477298, 1.0: 0.7820593207287577} -> alpha = 0.6
+main test done (114s); paired: {'LUT': {'mean_diff_pct_points': 0.3880253532855823, 'sem_pct_points': 0.025605032712551493, 'episodes_ppo_better_pct': 84.24479166666666, 'episodes_ppo_worse_pct': 15.755208333333334}, 'LUT_filtered': {'mean_diff_pct_points': 0.1933282341678285, 'sem_pct_points': 0.01710422385458766, 'episodes_ppo_better_pct': 71.74479166666666, 'episodes_ppo_worse_pct': 28.255208333333332}}
+  Greedy                       power 20.125 MW  gain  +0.00% (+-0.00)  travel   143 deg/h  switches 0.39/h  reward -0.146
+  LUT                          power 20.634 MW  gain  +2.53% (+-0.16)  travel   290 deg/h  switches 2.23/h  reward +0.874
+  LUT_filtered                 power 20.673 MW  gain  +2.72% (+-0.16)  travel   185 deg/h  switches 1.37/h  reward +1.040
+  Random                       power 19.587 MW  gain  -2.68% (+-0.05)  travel   719 deg/h  switches 15.82/h  reward -1.775
+  ppo_seed0                    power 20.713 MW  gain  +2.92% (+-0.16)  travel   150 deg/h  switches 1.29/h  reward +1.155
+  ppo_seed1                    power 20.712 MW  gain  +2.92% (+-0.16)  travel   146 deg/h  switches 1.26/h  reward +1.156
+  ppo_seed2                    power 20.711 MW  gain  +2.91% (+-0.16)  travel   146 deg/h  switches 1.28/h  reward +1.153
+  ablation_no_powers_seed0     power 20.677 MW  gain  +2.74% (+-0.16)  travel   159 deg/h  switches 1.36/h  reward +1.068
+  ablation_no_symmetry_seed0   power 20.578 MW  gain  +2.25% (+-0.14)  travel   169 deg/h  switches 1.69/h  reward +0.840
+  ablation_no_yaw_cost_seed0   power 20.713 MW  gain  +2.92% (+-0.16)  travel   173 deg/h  switches 1.44/h  reward +1.138
+  gamma_0.0_seed0              power 20.706 MW  gain  +2.89% (+-0.16)  travel   138 deg/h  switches 1.20/h  reward +1.149
+  gamma_0.8_seed0              power 20.687 MW  gain  +2.79% (+-0.16)  travel   155 deg/h  switches 1.32/h  reward +1.094
+  gamma_0.95_seed0             power 20.633 MW  gain  +2.52% (+-0.15)  travel   175 deg/h  switches 1.47/h  reward +0.957
+  gamma_0.95_seed1             power 20.640 MW  gain  +2.56% (+-0.15)  travel   166 deg/h  switches 1.54/h  reward +0.980
+  gamma_0.95_seed2             power 20.627 MW  gain  +2.49% (+-0.15)  travel   166 deg/h  switches 1.48/h  reward +0.951
+steady-state sweep done (4s): {"ppo_seed0": {"mean_gain_pct": 5.25359505121481, "fraction_of_optimal_gain": 0.9691561252384097}, "ppo_seed1": {"mean_gain_pct": 5.281752287726642, "fraction_of_optimal_gain": 0.9735171494300703}, "ppo_seed2": {"mean_gain_pct": 5.289231499695643, "fraction_of_optimal_gain": 0.9751993419499082}, "LUT_optimal": {"mean_gain_pct": 5.3992498558530055}}
+decision time: PPO 0.096 ms vs SR optimisation 888 ms
+noise study done (147s)
+model-mismatch study done (125s): {
+ "GCH (training model)": {
+  "LUT": 2.7296591007321735,
+  "LUT_filtered": 2.893152591990411,
+  "ppo_seed0": 3.0688288229266725,
+  "ppo_seed1": 3.0759493612026567,
+  "ppo_seed2": 3.0748303965094648
+ },
+ "Cumulative-curl": {
+  "LUT": 3.0517119402239334,
+  "LUT_filtered": 3.221004215719381,
+  "ppo_seed0": 3.412549323148961,
+  "ppo_seed1": 3.4105086992098244,
+  "ppo_seed2": 3.4087215360359746
+ },
+ "GCH, TI = 10%": {
+  "LUT": 1.1764780959379495,
+  "LUT_filtered": 1.2534554979577894,
+  "ppo_seed0": 1.4341481147214674,
+  "ppo_seed1": 1.4429268517231586,
+  "ppo_seed2": 1.4478285031943816
+ }
+}
+wrote C:\Users\Lenovo\OneDrive\Documents\AI Assignment 2\results\evaluation.json
