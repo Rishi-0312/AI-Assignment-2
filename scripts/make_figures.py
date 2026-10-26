@@ -29,9 +29,10 @@ from wakesteer.ppo import load_policy  # noqa: E402
 
 RESULTS = ROOT / "results"
 FIGS = RESULTS / "figures"
+REPORT_FIGS = ROOT / "report" / "figures"
 
-# One fixed colour per controller (categorical slots 1-2; the greedy reference is neutral).
-C_PPO, C_LUT, C_GREEDY = "#2a78d6", "#eb6834", "#898781"
+# One fixed colour per controller (categorical slots 1-3; the greedy reference is neutral).
+C_PPO, C_LUT, C_PLAIN, C_GREEDY = "#2a78d6", "#eb6834", "#1baf7a", "#898781"
 INK, INK2, GRID, AXIS = "#0b0b0b", "#52514e", "#e1e0d9", "#c3c2b7"
 WAKE_CMAP = LinearSegmentedColormap.from_list(
     "wake", ["#0d366b", "#184f95", "#256abf", "#3987e5", "#6da7ec", "#9ec5f4", "#cde2fb", "#fcfcfb"]
@@ -76,7 +77,9 @@ def style() -> None:
 
 def save(fig, name: str) -> None:
     FIGS.mkdir(parents=True, exist_ok=True)
+    REPORT_FIGS.mkdir(parents=True, exist_ok=True)
     fig.savefig(FIGS / f"{name}.pdf")
+    fig.savefig(REPORT_FIGS / f"{name}.pdf")  # the report folder stays self-contained (e.g. for Overleaf)
     fig.savefig(FIGS / f"{name}.png", dpi=200)
     plt.close(fig)
     print(f"wrote {name}")
@@ -141,6 +144,9 @@ def fig_training() -> None:
     stack = np.stack([c[:n, 1] for c in curves])
     steps = curves[0][:n, 0] / 1e6
     ax.plot(steps, stack.mean(0), color=C_PPO, lw=1.6, label=f"PPO (mean of {len(curves)} seeds; thin: seeds)")
+    for run in sorted(p.parent.name for p in ROOT.glob("runs/ablation_no_symmetry_seed*/policy.pt")):
+        df = pd.read_csv(ROOT / "runs" / run / "progress.csv").dropna(subset=["val_gain_pct"])
+        ax.plot(df["env_steps"] / 1e6, df["val_gain_pct"], color=C_PLAIN, lw=1.2, label="PPO, plain MLP (no symmetry)")
     lut = ev["validation_reference"]["LUT"]
     ax.axhline(lut, color=C_LUT, lw=1.2, ls=(0, (4, 2)), label="LUT (FLORIS-SR)")
     ax.axhline(0.0, color=C_GREEDY, lw=1.0, label="Greedy")
