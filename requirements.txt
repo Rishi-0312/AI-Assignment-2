@@ -1,0 +1,8 @@
+floris==4.7
+gymnasium>=1.0
+numpy>=2.0
+torch>=2.2
+matplotlib>=3.8
+pyyaml>=6.0
+pandas>=2.0
+pytest>=8.0
