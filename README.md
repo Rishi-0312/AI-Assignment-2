@@ -1,7 +1,7 @@
 # WakeSteer — Reinforcement Learning for Wind-Farm Wake Steering
 
 **AI Course Mini-Project, Assignment 2 — Real-Life Use Cases of Reinforcement Learning**
-Team: _see the report header_ (`report/team.tex`) · Report: [`report/report.pdf`](report/report.pdf)
+Team: **Rishi Agarwal (B23BB1036)**, **Abhishek Kumar (B23MT1003)** · Report: [`report/report.pdf`](report/report.pdf)
 
 Wakes shed by upstream wind turbines cut the output of the machines behind them — by up to 75 % in the farm
 studied here. *Wake steering* deliberately yaws upstream rotors a few degrees away from the wind so that their
@@ -157,8 +157,8 @@ tests/                pytest unit tests (environment dynamics, GAE, symmetry, LU
 Requires Python 3.10–3.13 (developed with 3.13 on Windows 11). A CPU is enough; no GPU is used.
 
 ```bash
-git clone <this-repository-url> WakeSteer
-cd WakeSteer
+git clone https://github.com/Rishi-0312/AI-Assignment-2.git
+cd AI-Assignment-2
 python -m venv .venv
 # Windows: .venv\Scripts\activate      Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
