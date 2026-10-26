@@ -12,8 +12,11 @@ venv/
 Thumbs.db
 .DS_Store
 
-# Scratch training runs (final runs are copied to runs/ explicitly)
+# Scratch training runs; resume checkpoints (optimizer state) and console logs
 runs/_scratch/
+runs/_pending*
+runs/**/checkpoint.pt
+runs/*.log
 
 # LaTeX build products
 report/*.aux

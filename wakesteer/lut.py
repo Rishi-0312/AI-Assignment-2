@@ -52,13 +52,10 @@ class YawLUT:
         return cls(**{k: data[k] for k in ("directions", "speeds", "offsets", "power_opt", "power_greedy")})
 
 
-def _optimize_chunk(args):
-    cfg_dict, wd, ws, max_offset, passes = args
+def serial_refine(fm, max_offset: float = 25.0, passes=(7, 6)):
+    """FLORIS Serial-Refine optimisation of the conditions currently set in ``fm`` (returns a DataFrame)."""
     from floris.optimization.yaw_optimization.yaw_optimizer_sr import YawOptimizationSR
 
-    cfg = FarmConfig(**cfg_dict)
-    fm = make_floris_model(cfg)
-    fm.set(wind_directions=wd, wind_speeds=ws, turbulence_intensities=np.full(len(wd), cfg.turbulence_intensity))
     opt = YawOptimizationSR(
         fm,
         minimum_yaw_angle=-max_offset,
@@ -66,7 +63,15 @@ def _optimize_chunk(args):
         Ny_passes=list(passes),
         exclude_downstream_turbines=True,
     )
-    df = opt.optimize(print_progress=False)
+    return opt.optimize(print_progress=False)
+
+
+def _optimize_chunk(args):
+    cfg_dict, wd, ws, max_offset, passes = args
+    cfg = FarmConfig(**cfg_dict)
+    fm = make_floris_model(cfg)
+    fm.set(wind_directions=wd, wind_speeds=ws, turbulence_intensities=np.full(len(wd), cfg.turbulence_intensity))
+    df = serial_refine(fm, max_offset, passes)
     return (
         np.stack(df["yaw_angles_opt"].to_numpy()),
         df["farm_power_opt"].to_numpy(),

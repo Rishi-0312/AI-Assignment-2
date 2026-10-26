@@ -90,9 +90,8 @@ def ppo_runs() -> list[str]:
 
 
 # --------------------------------------------------------------------------- figures
-def fig_flow(direction=270.0, speed=8.0) -> None:
+def fig_flow(direction=275.0, speed=8.0) -> None:
     """Hub-height flow for greedy control vs. the PPO agent's settled yaw offsets."""
-    from floris.flow_visualization import visualize_cut_plane
     from floris.layout_visualization import plot_turbine_rotors
 
     sweep = np.load(RESULTS / "steady_state.npz")
@@ -101,19 +100,24 @@ def fig_flow(direction=270.0, speed=8.0) -> None:
     _, payload = load_policy(ROOT / "runs" / run / "policy.pt")
     cfg = config_from_dict(payload["config"])
     fm = make_floris_model(cfg.farm)
-    panels = [("Greedy (all turbines aligned)", np.zeros(fm.n_turbines)), ("PPO agent (wake steering)", sweep[f"{run}_offsets"][i])]
+    panels = [("Greedy", np.zeros(fm.n_turbines)), ("PPO agent", sweep[f"{run}_offsets"][i])]
+    xlim, ylim = (-250, 2150), (-330, 1590)
 
-    fig, axes = plt.subplots(1, 2, figsize=(COL_W, 1.72), sharey=True)
+    fig, axes = plt.subplots(1, 2, figsize=(COL_W, 1.5), sharey=True, gridspec_kw={"wspace": 0.08})
     powers = []
     for ax, (title, yaw) in zip(axes, panels):
         fm.set(wind_directions=[direction], wind_speeds=[speed], turbulence_intensities=[cfg.farm.turbulence_intensity],
                yaw_angles=yaw[None, :])
         fm.run()
         powers.append(fm.get_farm_power()[0] / 1e6)
-        plane = fm.calculate_horizontal_plane(height=90.0, x_resolution=260, y_resolution=200,
-                                              x_bounds=(-250, 2150), y_bounds=(-330, 1590))
-        im = visualize_cut_plane(plane, ax=ax, cmap=WAKE_CMAP, min_speed=3.0, max_speed=speed + 0.2)
+        # FLORIS samples the plane on a wind-aligned grid (given in map coordinates), hence tripcolor.
+        plane = fm.calculate_horizontal_plane(height=90.0, x_resolution=340, y_resolution=280,
+                                              x_bounds=(xlim[0] - 250, xlim[1] + 250), y_bounds=(ylim[0] - 250, ylim[1] + 250))
+        df = plane.df
+        mesh = ax.tripcolor(df.x1, df.x2, df.u, cmap=WAKE_CMAP, vmin=3.0, vmax=speed, shading="gouraud", rasterized=True)
         plot_turbine_rotors(fm, ax=ax, color=INK, wd=np.array([direction]), yaw_angles=yaw[None, :])
+        ax.set_xlim(*xlim)
+        ax.set_ylim(*ylim)
         ax.set_aspect("equal")
         ax.grid(False)
         ax.set_xticks([0, 1000, 2000])
@@ -122,10 +126,9 @@ def fig_flow(direction=270.0, speed=8.0) -> None:
     axes[0].set_ylabel("y [m]")
     gain = 100 * (powers[1] / powers[0] - 1)
     for ax, p, extra in zip(axes, powers, ["", f" ({gain:+.1f}%)"]):
-        ax.text(0.03, 0.97, f"{p:.2f} MW{extra}", transform=ax.transAxes, va="top", fontsize=6.8, color=INK,
-                bbox=dict(boxstyle="round,pad=0.25", fc="#fcfcfb", ec="none", alpha=0.85))
-    mappable = axes[1].collections[0] if axes[1].collections else im
-    cb = fig.colorbar(mappable, ax=axes, orientation="vertical", fraction=0.035, pad=0.02)
+        ax.text(0.03, 0.97, f"{p:.2f} MW{extra}", transform=ax.transAxes, va="top", fontsize=6.5, color=INK,
+                bbox=dict(boxstyle="round,pad=0.2", fc="#fcfcfb", ec="none", alpha=0.85))
+    cb = fig.colorbar(mesh, ax=axes, orientation="vertical", fraction=0.025, pad=0.02, aspect=18)
     cb.set_label("wind speed [m/s]", color=INK2)
     cb.outline.set_visible(False)
     save(fig, "fig_flow")
@@ -165,21 +168,19 @@ def fig_sweep(speed_label="8 m/s", turbine=0) -> None:
     opt_gain = 100 * (sw["lut_optimal"] / sw["greedy"] - 1)
     ppo_gain = np.stack([100 * (sw[f"{r}_power"] / sw["greedy"] - 1) for r in runs])
 
-    fig, (a, b) = plt.subplots(2, 1, figsize=(COL_W, 2.45), sharex=True, gridspec_kw={"height_ratios": [1.15, 1]})
+    fig, (a, b) = plt.subplots(2, 1, figsize=(COL_W, 2.4), sharex=True, gridspec_kw={"height_ratios": [1.1, 1]})
     a.plot(d, opt_gain, color=C_LUT, lw=1.1, label="FLORIS-SR optimum (model-based)")
     a.plot(d, ppo_gain.mean(0), color=C_PPO, lw=1.1, label=f"PPO (mean of {len(runs)} seeds)")
     a.set_ylabel("power gain [%]")
-    a.legend(loc="upper left", ncol=2, borderaxespad=0.1)
-    a.set_ylim(bottom=min(-1.0, float(ppo_gain.mean(0).min()) - 0.5), top=float(opt_gain.max()) * 1.32)
-    a.set_title(f"steady state, U = {speed_label}, TI = 6%", loc="right", color=INK2, pad=2)
+    a.legend(loc="lower left", bbox_to_anchor=(0.0, 1.0), ncol=2, borderaxespad=0.1)
+    a.set_ylim(bottom=min(-1.0, float(ppo_gain.mean(0).min()) - 0.5), top=float(opt_gain.max()) * 1.08)
 
-    b.plot(d, sw["lut_offsets"][:, turbine], color=C_LUT, lw=1.1, label="FLORIS-SR")
-    b.plot(d, sw[f"{runs[0]}_offsets"][:, turbine], color=C_PPO, lw=1.1, label=f"PPO ({runs[0].replace('ppo_', '')})")
+    b.plot(d, sw["lut_offsets"][:, turbine], color=C_LUT, lw=1.1)
+    b.plot(d, sw[f"{runs[0]}_offsets"][:, turbine], color=C_PPO, lw=1.1)
     b.set_ylabel(f"yaw offset T{turbine + 1} [deg]")
-    b.set_xlabel("wind direction [deg]")
+    b.set_xlabel(f"wind direction [deg]  (U = {speed_label}, constant)")
     b.set_xticks(np.arange(0, 361, 45))
     b.set_xlim(0, 359)
-    b.legend(loc="upper left", ncol=2, borderaxespad=0.1)
     save(fig, "fig_sweep")
 
 
@@ -247,21 +248,20 @@ def fig_episode() -> None:
     k = int(np.argmax(score))
     t = np.arange(wd.shape[0]) + 1
     g = ex["Greedy_farm_power"][:, k]
-    fig, (a, b, c) = plt.subplots(3, 1, figsize=(COL_W, 3.0), sharex=True, gridspec_kw={"hspace": 0.18})
+    fig, (a, b, c) = plt.subplots(3, 1, figsize=(COL_W + 0.9, 3.0), sharex=True, gridspec_kw={"hspace": 0.18})
     a.plot(t, ex["Greedy_measured_direction"][:, k], color=C_GREEDY, lw=0.8, marker="o", ms=1.5, label="measured")
     a.plot(t, wd[:, k], color=INK, lw=1.2, label="true")
     a.axhline(270, color=AXIS, lw=0.6)
     a.set_ylabel("wind dir. [deg]")
-    a.legend(loc="best", ncol=2)
-    for name, col, ls in [("LUT", C_LUT, "-"), ("PPO", C_PPO, "-")]:
-        b.plot(t, ex[f"{name}_yaw_offsets"][:, k, 0], color=col, ls=ls, label=name)
-        c.plot(t, 100 * (ex[f"{name}_farm_power"][:, k] / g - 1), color=col, ls=ls, label=name)
+    for name, col, marker in [("LUT", C_LUT, "s"), ("PPO", C_PPO, "o")]:
+        b.plot(t, ex[f"{name}_yaw_offsets"][:, k, 0], color=col, marker=marker, ms=1.8, label=name)
+        c.plot(t, 100 * (ex[f"{name}_farm_power"][:, k] / g - 1), color=col, marker=marker, ms=1.8, label=name)
     b.set_ylabel("yaw T1 [deg]")
-    b.legend(loc="best", ncol=2)
-    c.axhline(0, color=C_GREEDY, lw=1.0)
+    c.axhline(0, color=C_GREEDY, lw=1.0, label="Greedy")
     c.set_ylabel("gain vs greedy [%]")
     c.set_xlabel("time [min]")
-    c.legend(loc="best", ncol=2)
+    for ax in (a, b, c):
+        ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0), borderaxespad=0.0)
     save(fig, "fig_episode")
 
 

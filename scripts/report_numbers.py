@@ -59,6 +59,8 @@ def main() -> None:
         "TravelPPO": fmt(agg["yaw_travel_mean"], 0),
         "TravelCutVsLUT": fmt(100 * (1 - agg["yaw_travel_mean"] / main_["LUT"]["yaw_travel_deg_per_turbine_h"]), 0),
         "PowerGreedy": fmt(main_["Greedy"]["mean_power_MW"]),
+        "SwitchLUT": fmt(main_["LUT"]["side_switches_per_turbine_h"], 1),
+        "SwitchPPO": fmt(np.mean([main_[r]["side_switches_per_turbine_h"] for r in runs]), 1),
         "BetterEpisodesPPO": fmt(np.mean([main_[r]["episodes_better_pct"] for r in runs]), 0),
         "SSoptimal": fmt(ev["steady_state_8ms"]["LUT_optimal"]["mean_gain_pct"]),
         "SSppo": fmt(np.mean([ev["steady_state_8ms"][r]["mean_gain_pct"] for r in runs])),

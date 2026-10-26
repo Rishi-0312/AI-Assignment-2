@@ -27,8 +27,8 @@ from wakesteer.config import config_from_dict  # noqa: E402
 from wakesteer.controllers import GreedyController, LUTController, PolicyController, RandomController  # noqa: E402
 from wakesteer.env import WakeSteeringVecEnv  # noqa: E402
 from wakesteer.evaluation import rollout, steady_state_sweep, summarize  # noqa: E402
-from wakesteer.farm import GreedyReference, make_simulator  # noqa: E402
-from wakesteer.lut import load_or_build_lut  # noqa: E402
+from wakesteer.farm import GreedyReference, make_floris_model, make_simulator  # noqa: E402
+from wakesteer.lut import load_or_build_lut, serial_refine  # noqa: E402
 from wakesteer.ppo import load_policy  # noqa: E402
 
 TEST_SEED = 2027  # held-out weather (training used seeds 0-2, validation seed 777)
@@ -39,6 +39,20 @@ RESULTS = ROOT / "results"
 def make_env(cfg, n, sim, ref, wind=None):
     env_cfg = replace(cfg.env, random_initial_offsets=False)
     return WakeSteeringVecEnv(n, cfg.farm, wind or cfg.wind, env_cfg, sim, ref)
+
+
+def side_switches_per_turbine_hour(yaw: np.ndarray, threshold: float = 5.0, dt: float = 60.0) -> float:
+    """How often a turbine's wake deflection flips side (offset > +thr <-> offset < -thr).
+
+    ``yaw`` holds true yaw offsets with shape (T, n_envs, n_turbines).
+    """
+    side = np.sign(yaw) * (np.abs(yaw) > threshold)
+    last = np.zeros(yaw.shape[1:])
+    count = np.zeros(yaw.shape[1:])
+    for s in side:
+        count += (s != 0) & (last != 0) & (s != last)
+        last = np.where(s != 0, s, last)
+    return float(count.mean() / (yaw.shape[0] * dt / 3600.0))
 
 
 def circular_mean_deg(angles, axis=0):
@@ -71,7 +85,7 @@ def main() -> None:
     ref = GreedyReference.load_or_build(sim)
     lut = load_or_build_lut(cfg.farm, cfg.env.max_offset, args.workers)
     report = {"test_seed": TEST_SEED, "episodes": args.episodes, "policies": list(policies)}
-    keys = ("farm_power", "greedy_power", "yaw_travel", "power_term", "wind_direction")
+    keys = ("farm_power", "greedy_power", "yaw_travel", "power_term", "wind_direction", "yaw_offsets")
 
     # ------------------------------------------------------------ main test
     t0 = time.perf_counter()
@@ -89,6 +103,8 @@ def main() -> None:
         trajs[p.parent.name] = rollout(make_env(pcfg, args.episodes, sim, ref), PolicyController(model), TEST_SEED, keys=keys)
     greedy = trajs["Greedy"]
     report["main"] = {name: summarize(tr, greedy) for name, tr in trajs.items()}
+    for name, tr in trajs.items():
+        report["main"][name]["side_switches_per_turbine_h"] = side_switches_per_turbine_hour(tr["yaw_offsets"])
     ppo_gains = [report["main"][n]["energy_gain_pct"] for n in policies]
     ppo_travel = [report["main"][n]["yaw_travel_deg_per_turbine_h"] for n in policies]
     report["ppo_aggregate"] = {
@@ -106,8 +122,9 @@ def main() -> None:
         "LUT": summarize(rollout(val_env, LUTController(lut), VALIDATION_SEED), val_greedy)["energy_gain_pct"]
     }
     for name, s in report["main"].items():
-        print(f"  {name:22s} power {s['mean_power_MW']:6.3f} MW  gain {s['energy_gain_pct']:+6.2f}% "
-              f"(+-{s['energy_gain_pct_sem']:.2f})  travel {s['yaw_travel_deg_per_turbine_h']:5.0f} deg/h  reward {s['mean_reward']:+.3f}")
+        print(f"  {name:28s} power {s['mean_power_MW']:6.3f} MW  gain {s['energy_gain_pct']:+6.2f}% "
+              f"(+-{s['energy_gain_pct_sem']:.2f})  travel {s['yaw_travel_deg_per_turbine_h']:5.0f} deg/h  "
+              f"switches {s['side_switches_per_turbine_h']:.2f}/h  reward {s['mean_reward']:+.3f}")
 
     # Gain by wind-direction sector (episodes binned by their mean direction).
     sector = 15.0
@@ -149,7 +166,7 @@ def main() -> None:
 
     # ---------------------------------------------------- example episode
     n_ex = 64
-    ex_keys = keys + ("yaw_offsets", "measured_direction", "setpoints")
+    ex_keys = tuple(dict.fromkeys(keys + ("yaw_offsets", "measured_direction", "setpoints")))
     env_ex = make_env(cfg, n_ex, sim, ref)
     first = next(iter(policies))
     ex = {
@@ -171,11 +188,15 @@ def main() -> None:
         for _ in range(2000):
             model.actor(model.features(obs))
     ppo_ms = (time.perf_counter() - t0) / 2000 * 1e3
-    from wakesteer.lut import optimize_offsets
-
-    t0 = time.perf_counter()
-    optimize_offsets(cfg.farm, [270.0], [8.0], cfg.env.max_offset, n_workers=1)
-    sr_ms = (time.perf_counter() - t0) * 1e3
+    # Online alternative to the LUT: optimise the current condition with FLORIS (model already built).
+    fm = make_floris_model(cfg.farm)
+    fm.set(wind_directions=[270.0], wind_speeds=[8.0], turbulence_intensities=[cfg.farm.turbulence_intensity])
+    sr_times = []
+    for _ in range(3):
+        t0 = time.perf_counter()
+        serial_refine(fm, cfg.env.max_offset)
+        sr_times.append(time.perf_counter() - t0)
+    sr_ms = min(sr_times) * 1e3
     report["decision_time_ms"] = {"ppo_policy": ppo_ms, "serial_refine_one_condition": sr_ms}
     print(f"decision time: PPO {ppo_ms:.3f} ms vs SR optimisation {sr_ms:.0f} ms")
 
