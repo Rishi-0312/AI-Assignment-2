@@ -43,6 +43,10 @@ def _from_dict(cls, data: dict, default=None):
     return replace(base, **kwargs)
 
 
+def config_from_dict(data: dict) -> ExperimentConfig:
+    return _from_dict(ExperimentConfig, data)
+
+
 def _set_path(data: dict, dotted: str, value) -> None:
     keys = dotted.split(".")
     for k in keys[:-1]:

@@ -11,7 +11,7 @@ Observation (dimension 4 + 2N for N turbines), all roughly in [-1, 1]:
     [2]      (measured wind speed - 8.5) / 3.5
     [3]      change of measured direction since the last step / 5 deg
     [4:4+N]  measured yaw offset of each turbine / max_offset
-    [4+N:]   power of each turbine / rated power
+    [4+N:]   power of each turbine / rated power (omitted if observe_powers=False)
 
 Action (dimension N), in [-1, 1]:  yaw-offset set-point / max_offset.
 
@@ -46,6 +46,7 @@ class EnvConfig:
     yaw_cost: float = 0.005  # reward penalty per degree of nacelle travel
     reward_scale: float = 100.0  # power term in percent of farm capacity
     random_initial_offsets: bool = False  # exploring starts (used for training)
+    observe_powers: bool = True  # include turbine powers in the observation
 
 
 class WakeSteeringVecEnv:
@@ -69,7 +70,7 @@ class WakeSteeringVecEnv:
         self.sim = simulator if simulator is not None else FarmSimulator(farm)
         self.ref = reference if reference is not None else GreedyReference.load_or_build(self.sim)
         self.n_turbines = self.sim.n_turbines
-        self.obs_dim = 4 + 2 * self.n_turbines
+        self.obs_dim = 4 + (2 if cfg.observe_powers else 1) * self.n_turbines
         self.act_dim = self.n_turbines
         self.capacity = self.n_turbines * self.sim.rated_power
         self.max_step = cfg.yaw_rate * cfg.dt  # max nacelle rotation per step [deg]
@@ -100,17 +101,16 @@ class WakeSteeringVecEnv:
     def _observe(self) -> np.ndarray:
         theta = np.deg2rad(self.wd_meas)
         trend = wrap180(self.wd_meas - self.wd_meas_prev)
-        return np.concatenate(
-            [
-                np.sin(theta)[:, None],
-                np.cos(theta)[:, None],
-                ((self.ws_meas - 8.5) / 3.5)[:, None],
-                (trend / 5.0)[:, None],
-                self.measured_offsets() / self.cfg.max_offset,
-                self.powers / self.sim.rated_power,
-            ],
-            axis=1,
-        ).astype(np.float32)
+        parts = [
+            np.sin(theta)[:, None],
+            np.cos(theta)[:, None],
+            ((self.ws_meas - 8.5) / 3.5)[:, None],
+            (trend / 5.0)[:, None],
+            self.measured_offsets() / self.cfg.max_offset,
+        ]
+        if self.cfg.observe_powers:
+            parts.append(self.powers / self.sim.rated_power)
+        return np.concatenate(parts, axis=1).astype(np.float32)
 
     # --------------------------------------------------------------------- API
     def reset(self, seed=None, initial_offsets=None, directions=None, speeds=None) -> np.ndarray:
