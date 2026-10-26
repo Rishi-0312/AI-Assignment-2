@@ -1,5 +1,8 @@
 # Discount-factor study: long horizon (~20 control steps = 20 minutes).
+# The three seeds were launched with a 5M-step budget and stopped at 3.6M steps,
+# after their validation reward had been flat for more than 1.5M steps.
 base: ppo.yaml
 name: gamma_0.95
 ppo:
   gamma: 0.95
+  total_steps: 5000000

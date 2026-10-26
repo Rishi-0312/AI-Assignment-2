@@ -40,8 +40,8 @@ yaw-drive limits and actuator wear. We cast farm-level yaw control as a Markov d
 stochastic wind, noisy sensing, rate-limited yaw drives and a wear penalty, simulated with NREL's FLORIS, and
 solve it with PPO (implemented from scratch) using an exactly rotation-equivariant policy. On \NumEpisodes{}
 held-out one-hour episodes of a 3$\times$3 farm the agent raises energy yield by \GainPPO\% over greedy
-control, versus \GainLUT\% for a LUT optimised with the very wake model it is tested in, while yawing
-\TravelCutVsLUT\% less.
+control, versus \GainLUT\% for a LUT optimised with the very wake model it is tested in and \GainLUTf\% for
+that LUT with tuned measurement filtering, while yawing \TravelCutVsLUT\% less than the LUT.
 \end{abstract}
 
 \section{Introduction}
@@ -104,22 +104,27 @@ only a quarter of the wind rose.
 
 \textbf{PPO~\cite{schulman2017}.} Gaussian policy, separate 2$\times$256 tanh actor and critic, Fourier
 features $\sin k\theta,\cos k\theta$ ($k\in\{1,2,3,4,8\}$). Clipped surrogate ($\epsilon=0.2$),
-GAE~\cite{schulman2016} ($\gamma=0.95$, $\lambda=0.9$), 256 envs$\times$30 steps per update, 10 epochs$\times$8
-minibatches, Adam $3\!\times\!10^{-4}$ (annealed), KL early stop at 0.02, per-network gradient clipping,
-bootstrapping at time-limit truncations, random initial offsets; $5\!\times\!10^6$ steps per run; the
-checkpoint with the best return on fixed validation weather is kept. PPO fits: actions are continuous and
-9-D (a discretised DQN would face $\gg10^8$ joint actions) and simulated experience is cheap.
+GAE~\cite{schulman2016} ($\lambda=0.9$), 256 envs$\times$30 steps per update, 10 epochs$\times$8 minibatches,
+Adam $3\!\times\!10^{-4}$ (annealed), KL early stop at 0.02, per-network gradient clipping, bootstrapping at
+time-limit truncations, random initial offsets; $3\!\times\!10^6$ steps per run ($\approx$1\,h); the
+checkpoint with the best return on fixed validation weather is kept. The discount $\gamma$ is a training
+hyper-parameter (the objective is undiscounted energy), selected from $\{0,0.5,0.8,0.95\}$ on validation
+weather. PPO fits: actions are continuous and 9-D (a discretised DQN would face $\gg10^8$ joint actions)
+and simulated experience is cheap.
 
 \textbf{Baselines.} \emph{Greedy}: zero offsets (industry standard). \emph{LUT}: offsets optimised offline
 with FLORIS' Serial-Refine method~\cite{fleming2022sr} on a $1^\circ\times1$\,m/s grid (3\,960 optimisations)
-using the \emph{same} wake model as the test, applied at the measured wind---a strong model-based reference.
+using the \emph{same} wake model as the test, applied at the measured wind---a model-based reference with
+perfect model knowledge. \emph{LUT+filter}: the same LUT fed with exponentially smoothed measurements, the
+nacelles tracking the smoothed direction (smoothing factor $\alpha=\AlphaLUTf$ tuned on validation weather).
 \emph{Random} set-points. All share the yaw dynamics and are tested on \NumEpisodes{} one-hour episodes of
-unseen weather, each controller facing \emph{identical} wind (paired comparison).
+unseen weather, every controller facing \emph{identical} wind (paired comparison).
 
 \section{Results}
 \begin{table}[t]
 \centering
-\caption{Held-out test: \NumEpisodes{} one-hour episodes, identical weather for all controllers.}
+\caption{Held-out test: \NumEpisodes{} one-hour episodes, identical weather for all controllers. Training
+budgets: PPO 3 seeds$\times$3M steps, $\gamma$\,=\,0.95 3 seeds$\times$3.6M, plain MLP 5M, others 3M.}
 \label{tab:main}
 \setlength{\tabcolsep}{3pt}
 \footnotesize
@@ -139,26 +144,31 @@ Controller & Energy gain & Yaw travel & Side & Reward\\
 \label{fig:flow}
 \end{figure}
 
-\textbf{Main result.} PPO gains \GainPPO$\pm$\GainPPOstd\% energy over greedy control (mean$\pm$std over
-\NumSeeds{} seeds; better in \BetterEpisodesPPO\% of episodes) against \GainLUT\% for the LUT, with
-\TravelPPO$^\circ$ instead of \TravelLUT$^\circ$ yaw travel per turbine-hour and \SwitchPPO{} instead of
-\SwitchLUT{} wake-side reversals per turbine-hour (Table~\ref{tab:main}, Fig.~\ref{fig:flow}). The LUT
-reacts to every noisy direction measurement near turbine alignments; the agent filters the noise and keeps
-its deflection side: when the wind veers slowly through the 270$^\circ$ row alignment it switches side at
-\HystPPOfwd$^\circ$ (veering right) and \HystPPObwd$^\circ$ (veering left), a \HystPPO$^\circ$ hysteresis
-band versus \HystLUT$^\circ$ for the LUT, which only lags behind its yaw drive.
+\textbf{Main result.} PPO ($\gamma=\GammaMain$) gains \GainPPO$\pm$\GainPPOstd\% energy over greedy
+control (mean$\pm$std over \NumSeeds{} seeds; better in \BetterEpisodesPPO\% of episodes), against
+\GainLUT\% for the LUT and \GainLUTf\% for LUT+filter, and earns the highest reward (\RewardPPO{} vs
+\RewardLUT{} and \RewardLUTf) with \TravelPPO$^\circ$ instead of \TravelLUT$^\circ$ yaw travel per
+turbine-hour (Table~\ref{tab:main}, Fig.~\ref{fig:flow}). The raw LUT chases every noisy measurement near
+turbine alignments; the agent instead holds its deflection side: when the wind veers slowly through the
+270$^\circ$ row alignment it switches at \HystPPOfwd$^\circ$ veering right but \HystPPObwd$^\circ$ veering
+left, a \HystPPO$^\circ$ hysteresis band versus \HystLUT$^\circ$ for the LUT (yaw-drive lag only).
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{fig_training}
-\caption{Validation energy gain during training.}
+\caption{Validation energy gain during training (thin: individual seeds).}
 \label{fig:training}
 \end{figure}
 
-\textbf{Learning and ablations.} The C$_4$-equivariant policy learns far faster than a plain MLP, which
-plateaus at \AblNoSymmetryGain\% (Fig.~\ref{fig:training}). A myopic agent ($\gamma=0$, a contextual
-bandit) reaches \AblMyopicGain\%; without turbine-power inputs the gain is \AblNoPowersGain\%; without the
-wear penalty yaw travel rises to \AblNoYawCostTravel$^\circ$/h.
+\textbf{Learning and ablations.} \emph{Discount:} the best validation rewards were \ValRewardZero,
+\ValRewardHalf, \ValRewardPointEight{} and \ValRewardNinetyFive{} for $\gamma=0$, 0.5, 0.8 and 0.95
+(Fig.~\ref{fig:training}b). Long-horizon returns are dominated by the exogenous wind, whereas a yaw drive
+reaches any set-point within 1--3 steps; a two-step horizon ($\gamma=0.5$) captures the cost of multi-step
+yaw manoeuvres at low variance, and even the myopic agent is close. \emph{Symmetry} (controlled at
+$\gamma=0.95$, Fig.~\ref{fig:training}a): the C$_4$-equivariant policy learns about 3$\times$ faster and
+plateaus higher than a plain MLP (test gain \AblNoSymmetryGain\% vs \AblLongHorizonGain\%).
+\emph{Inputs and reward:} without turbine-power inputs the gain drops to \AblNoPowersGain\%; without the wear
+penalty yaw travel rises to \AblNoYawCostTravel$^\circ$/h (gain \AblNoYawCostGain\%).
 
 \begin{figure}[t]
 \centering
@@ -179,16 +189,18 @@ sign switches of the optimal yaw schedule.
 \label{fig:robust}
 \end{figure}
 
-\textbf{Robustness.} With perfect direction measurements the LUT is near-optimal (\NoiseLUTZero\% vs
-\NoisePPOZero\%), but it degrades fast with noise (\NoiseLUTSix\% at $\sigma=6^\circ$) while the agent keeps
-\NoisePPOSix\% (Fig.~\ref{fig:robust}). Under the cumulative-curl wake model both stay profitable (LUT
-\MismatchCCLUT\%, PPO \MismatchCCPPO\%); at TI\,=\,10\% gains shrink (\MismatchTILUT\% vs \MismatchTIPPO\%).
+\textbf{Robustness} (Fig.~\ref{fig:robust}, no retraining). With perfect direction measurements the raw
+LUT is best (\NoiseLUTZero\% vs \NoisePPOZero\% for PPO), but it collapses as noise grows (\NoiseLUTSix\% at
+$\sigma=6^\circ$; LUT+filter \NoiseLUTfSix\%, PPO \NoisePPOSix\%). Under the cumulative-curl wake model all
+controllers stay profitable (LUT \MismatchCCLUT\%, LUT+filter \MismatchCCLUTf\%, PPO \MismatchCCPPO\%); at
+TI\,=\,10\% gains shrink (\MismatchTILUT\%, \MismatchTILUTf\%, \MismatchTIPPO\%).
 
 \section{Conclusion}
-PPO trained in FLORIS learns wake steering that beats greedy control and a model-optimised LUT under
-realistic sensing and actuation, with far less yaw activity and \DecisionPPO\,ms decisions (online FLORIS
-optimisation: \DecisionSR\,ms). Encoding the farm's symmetry was key to sample efficiency. Limitations:
-steady-state wakes (no advection delay), one layout, simulated sensors.
+PPO trained in FLORIS learns wake steering that outperforms greedy control and model-optimised LUTs (raw and
+filtered) under realistic sensing and actuation, with less yaw activity and \DecisionPPO\,ms decisions
+(online FLORIS optimisation: \DecisionSR\,ms). Encoding the farm's rotation symmetry and a short training
+horizon were key to sample efficiency. Limitations: steady-state wakes (no advection delay), one layout,
+simulated sensors.
 
 \clearpage  % pages 1-2: content; references follow (excluded from the page limit)
 \begin{thebibliography}{10}
