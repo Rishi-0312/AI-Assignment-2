@@ -1,0 +1,5 @@
+# Discount-factor study: effective horizon of ~2 control steps (2 minutes).
+base: ppo.yaml
+name: gamma_0.5
+ppo:
+  gamma: 0.5

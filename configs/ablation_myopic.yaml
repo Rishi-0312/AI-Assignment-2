@@ -1,6 +1,0 @@
-# Ablation: myopic agent (gamma = 0) -- treats every step as an independent
-# contextual bandit, ignoring the future consequences of yaw moves.
-base: ppo.yaml
-name: ablation_myopic
-ppo:
-  gamma: 0.0

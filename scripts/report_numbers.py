@@ -12,10 +12,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import sys
+
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT = ROOT / "report"
+sys.path.insert(0, str(ROOT))
+
+from wakesteer.evaluation import switch_direction  # noqa: E402
 
 ABLATIONS = [  # run-name prefix (all seeds are averaged), table label, macro stem
     ("ablation_no_symmetry", r"\ -- plain MLP (no C$_4$)", "NoSymmetry"),
@@ -60,6 +65,12 @@ def main() -> None:
         "TravelCutVsLUT": fmt(100 * (1 - agg["yaw_travel_mean"] / main_["LUT"]["yaw_travel_deg_per_turbine_h"]), 0),
         "PowerGreedy": fmt(main_["Greedy"]["mean_power_MW"]),
         "SwitchLUT": fmt(main_["LUT"]["side_switches_per_turbine_h"], 1),
+        "GainLUTf": fmt(main_["LUT_filtered"]["energy_gain_pct"]),
+        "TravelLUTf": fmt(main_["LUT_filtered"]["yaw_travel_deg_per_turbine_h"], 0),
+        "RewardLUTf": fmt(main_["LUT_filtered"]["mean_reward"]),
+        "RewardLUT": fmt(main_["LUT"]["mean_reward"]),
+        "RewardPPO": fmt(agg["mean_reward_mean"]),
+        "AlphaLUTf": f"{ev['filtered_lut_tuning']['alpha']:g}",
         "SwitchPPO": fmt(np.mean([main_[r]["side_switches_per_turbine_h"] for r in runs]), 1),
         "BetterEpisodesPPO": fmt(np.mean([main_[r]["episodes_better_pct"] for r in runs]), 0),
         "SSoptimal": fmt(ev["steady_state_8ms"]["LUT_optimal"]["mean_gain_pct"]),
@@ -69,15 +80,30 @@ def main() -> None:
         "DecisionSR": fmt(ev["decision_time_ms"]["serial_refine_one_condition"], 0),
         "ValLUT": fmt(ev["validation_reference"]["LUT"]),
     }
+    if "hysteresis" in ev:  # slow veer through 270 deg: where does T1 change deflection side?
+        def band(name):
+            h = ev["hysteresis"][name]
+            fwd = switch_direction(h["forward"]["wind_direction"], np.array(h["forward"]["yaw_offsets"])[:, 0])
+            bwd = switch_direction(h["backward"]["wind_direction"], np.array(h["backward"]["yaw_offsets"])[:, 0])
+            return fwd, bwd
+
+        lut_f, lut_b = band("LUT")
+        ppo_fb = [band(r) for r in runs]
+        macros["HystLUT"] = fmt(lut_f - lut_b, 1)
+        macros["HystPPO"] = fmt(np.mean([f - b for f, b in ppo_fb]), 1)
+        macros["HystPPOfwd"] = fmt(np.mean([f for f, _ in ppo_fb]), 1)
+        macros["HystPPObwd"] = fmt(np.mean([b for _, b in ppo_fb]), 1)
     if "noise_robustness" in ev:
         nz = ev["noise_robustness"]
         for i, s in enumerate(nz["sigma_deg"]):
             tag = ["Zero", "Two", "Four", "Six"][i] if i < 4 else str(i)
             macros[f"NoiseLUT{tag}"] = fmt(nz["LUT"]["gain"][i])
+            macros[f"NoiseLUTf{tag}"] = fmt(nz["LUT_filtered"]["gain"][i])
             macros[f"NoisePPO{tag}"] = fmt(np.mean([nz[r]["gain"][i] for r in runs]))
-        for label, key in [("Cumulative-curl", "CC"), ("GCH, TI = 10%", "TI")]:
+        for label, key in [("GCH (training model)", "GCH"), ("Cumulative-curl", "CC"), ("GCH, TI = 10%", "TI")]:
             mm = ev["model_mismatch"][label]
             macros[f"Mismatch{key}LUT"] = fmt(mm["LUT"])
+            macros[f"Mismatch{key}LUTf"] = fmt(mm["LUT_filtered"])
             macros[f"Mismatch{key}PPO"] = fmt(np.mean([mm[r] for r in runs]))
     for prefix, _, stem in ABLATIONS:
         s = group_mean(main_, prefix)
@@ -99,8 +125,10 @@ def main() -> None:
             cells = [f"\\textbf{{{c}}}" for c in cells]
         return " & ".join(cells) + r" \\"
 
+    alpha = ev["filtered_lut_tuning"]["alpha"]
     lines = [row("Greedy (baseline)", main_["Greedy"]), row("Random", main_["Random"]),
-             row("LUT (FLORIS-SR)", main_["LUT"]), r"\midrule"]
+             row("LUT (FLORIS-SR)", main_["LUT"]), row(f"LUT + filter ($\\alpha$={alpha:g})", main_["LUT_filtered"]),
+             r"\midrule"]
     g, gs = ppo("energy_gain_pct")
     t, ts = ppo("yaw_travel_deg_per_turbine_h")
     sw, _ = ppo("side_switches_per_turbine_h")
@@ -124,7 +152,8 @@ def main() -> None:
     md = ["| Controller | Energy gain vs greedy | Yaw travel [°/turbine/h] | Wake-side switches [/turbine/h] | Reward / step |",
           "|---|---:|---:|---:|---:|",
           md_row("Greedy (industry baseline)", main_["Greedy"]), md_row("Random set-points", main_["Random"]),
-          md_row("LUT (FLORIS Serial-Refine, model-based)", main_["LUT"])]
+          md_row("LUT (FLORIS Serial-Refine, model-based)", main_["LUT"]),
+          md_row(f"LUT + exponential filter (α = {alpha:g}, tuned on validation)", main_["LUT_filtered"])]
     agg_row = {k: float(np.mean([main_[r][k] for r in runs])) for k in main_[runs[0]]}
     md.append(md_row(f"PPO agent (ours, mean of {len(runs)} seeds)", agg_row, bold=True))
     for prefix, label, _ in ABLATIONS:

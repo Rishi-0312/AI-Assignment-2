@@ -68,5 +68,15 @@ def steady_state_sweep(env_template: WakeSteeringVecEnv, controller, directions,
     return info["turbine_powers"], info["yaw_offsets"]
 
 
+def switch_direction(wind_directions, yaw, window=(262.0, 278.0)):
+    """Wind direction at which a yaw offset changes sign inside ``window`` (linear interpolation), or None."""
+    wd, yaw = np.asarray(wind_directions, dtype=float), np.asarray(yaw, dtype=float)
+    inside = np.flatnonzero((wd >= window[0]) & (wd <= window[1]))
+    for i, j in zip(inside[:-1], inside[1:]):
+        if np.sign(yaw[i]) != np.sign(yaw[j]) and yaw[i] != 0:
+            return float(wd[i] + (wd[j] - wd[i]) * yaw[i] / (yaw[i] - yaw[j]))
+    return None
+
+
 def static_wind(cfg: WindConfig) -> WindConfig:
     return replace(cfg, direction_innovation=0.0, speed_innovation=0.0, speed_reversion=0.0, direction_noise=0.0, speed_noise=0.0)

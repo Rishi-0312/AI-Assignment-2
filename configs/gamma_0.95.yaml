@@ -1,0 +1,5 @@
+# Discount-factor study: long horizon (~20 control steps = 20 minutes).
+base: ppo.yaml
+name: gamma_0.95
+ppo:
+  gamma: 0.95

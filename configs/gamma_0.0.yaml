@@ -1,0 +1,6 @@
+# Discount-factor study: myopic agent (gamma = 0). Every step is treated as a
+# contextual bandit; future consequences of yaw moves are ignored.
+base: ppo.yaml
+name: gamma_0.0
+ppo:
+  gamma: 0.0

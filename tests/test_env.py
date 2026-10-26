@@ -88,6 +88,20 @@ def test_observation_without_powers(sim, ref):
     assert env.reset(seed=6).shape == (env.n, 4 + env.n_turbines)
 
 
+def test_filtered_lut_without_filtering_equals_lut(sim, ref):
+    from wakesteer.controllers import FilteredLUTController, LUTController
+    from wakesteer.lut import YawLUT, lut_path
+
+    lut = YawLUT.load(lut_path(FarmConfig()))
+    env = make(sim, ref)
+    obs = env.reset(seed=8)
+    plain, unfiltered = LUTController(lut), FilteredLUTController(lut, alpha=1.0)
+    for _ in range(3):
+        a = plain(obs, env)
+        assert np.allclose(a, unfiltered(obs, env))
+        obs, _, _, _ = env.step(a)
+
+
 def test_episode_length(sim, ref):
     env = make(sim, ref, n=2, episode_length=3)
     env.reset(seed=7)

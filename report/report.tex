@@ -143,8 +143,10 @@ Controller & Energy gain & Yaw travel & Side & Reward\\
 \NumSeeds{} seeds; better in \BetterEpisodesPPO\% of episodes) against \GainLUT\% for the LUT, with
 \TravelPPO$^\circ$ instead of \TravelLUT$^\circ$ yaw travel per turbine-hour and \SwitchPPO{} instead of
 \SwitchLUT{} wake-side reversals per turbine-hour (Table~\ref{tab:main}, Fig.~\ref{fig:flow}). The LUT
-reacts to every noisy direction measurement near turbine alignments; the agent filters the noise, reads the
-wake situation from the turbine outputs and keeps its deflection side until switching pays off.
+reacts to every noisy direction measurement near turbine alignments; the agent filters the noise and keeps
+its deflection side: when the wind veers slowly through the 270$^\circ$ row alignment it switches side at
+\HystPPOfwd$^\circ$ (veering right) and \HystPPObwd$^\circ$ (veering left), a \HystPPO$^\circ$ hysteresis
+band versus \HystLUT$^\circ$ for the LUT, which only lags behind its yaw drive.
 
 \begin{figure}[t]
 \centering

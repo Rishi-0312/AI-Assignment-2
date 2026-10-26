@@ -24,7 +24,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from wakesteer.config import config_from_dict  # noqa: E402
-from wakesteer.controllers import GreedyController, LUTController, PolicyController, RandomController  # noqa: E402
+from wakesteer.controllers import (  # noqa: E402
+    FilteredLUTController,
+    GreedyController,
+    LUTController,
+    PolicyController,
+    RandomController,
+)
 from wakesteer.env import WakeSteeringVecEnv  # noqa: E402
 from wakesteer.evaluation import rollout, static_wind, steady_state_sweep, summarize  # noqa: E402
 from wakesteer.farm import GreedyReference, make_floris_model, make_simulator  # noqa: E402
@@ -73,7 +79,8 @@ def main() -> None:
     RESULTS.mkdir(exist_ok=True)
 
     policy_paths = [Path(p) for p in args.policies] if args.policies else sorted(ROOT.glob("runs/ppo_seed*/policy.pt"))
-    ablation_paths = [Path(p) for p in args.ablations] if args.ablations else sorted(ROOT.glob("runs/ablation_*/policy.pt"))
+    ablation_paths = ([Path(p) for p in args.ablations] if args.ablations else
+                      sorted(ROOT.glob("runs/ablation_*/policy.pt")) + sorted(ROOT.glob("runs/gamma_*/policy.pt")))
     policies = {}
     for p in policy_paths:
         model, payload = load_policy(p)
@@ -88,12 +95,28 @@ def main() -> None:
     report = {"test_seed": TEST_SEED, "episodes": args.episodes, "policies": list(policies)}
     keys = ("farm_power", "greedy_power", "yaw_travel", "power_term", "wind_direction", "yaw_offsets")
 
+    # ------------------------------------- validation weather: references and baseline tuning
+    t0 = time.perf_counter()
+    val_env = make_env(cfg, VALIDATION_EPISODES, sim, ref)
+    val_greedy = rollout(val_env, GreedyController(), VALIDATION_SEED)
+    report["validation_reference"] = {
+        "LUT": summarize(rollout(val_env, LUTController(lut), VALIDATION_SEED), val_greedy)["energy_gain_pct"]
+    }
+    # The filtered LUT gets its smoothing factor tuned on the validation weather, using the same
+    # objective (mean reward) that selected the PPO checkpoints.
+    tuning = {a: summarize(rollout(val_env, FilteredLUTController(lut, a), VALIDATION_SEED), val_greedy)["mean_reward"]
+              for a in (0.15, 0.25, 0.4, 0.6, 1.0)}
+    alpha = max(tuning, key=tuning.get)
+    report["filtered_lut_tuning"] = {"alpha_to_validation_reward": {str(k): v for k, v in tuning.items()}, "alpha": alpha}
+    print(f"filtered-LUT tuning ({time.perf_counter() - t0:.0f}s): {tuning} -> alpha = {alpha}")
+
     # ------------------------------------------------------------ main test
     t0 = time.perf_counter()
     env = make_env(cfg, args.episodes, sim, ref)
     trajs = {
         "Greedy": rollout(env, GreedyController(), TEST_SEED, keys=keys),
         "LUT": rollout(env, LUTController(lut), TEST_SEED, keys=keys),
+        "LUT_filtered": rollout(env, FilteredLUTController(lut, alpha), TEST_SEED, keys=keys),
         "Random": rollout(env, RandomController(0), TEST_SEED, keys=keys),
     }
     for name, (model, pcfg) in policies.items():
@@ -115,13 +138,6 @@ def main() -> None:
         "mean_reward_mean": float(np.mean([report["main"][n]["mean_reward"] for n in policies])),
     }
     print(f"main test done ({time.perf_counter() - t0:.0f}s)")
-
-    # LUT on the validation weather used during training (reference line for learning curves).
-    val_env = make_env(cfg, VALIDATION_EPISODES, sim, ref)
-    val_greedy = rollout(val_env, GreedyController(), VALIDATION_SEED)
-    report["validation_reference"] = {
-        "LUT": summarize(rollout(val_env, LUTController(lut), VALIDATION_SEED), val_greedy)["energy_gain_pct"]
-    }
     for name, s in report["main"].items():
         print(f"  {name:28s} power {s['mean_power_MW']:6.3f} MW  gain {s['energy_gain_pct']:+6.2f}% "
               f"(+-{s['energy_gain_pct_sem']:.2f})  travel {s['yaw_travel_deg_per_turbine_h']:5.0f} deg/h  "
@@ -233,7 +249,8 @@ def main() -> None:
             wind = replace(cfg.wind, direction_noise=sigma)
             env_n = make_env(cfg, n_rob, sim, ref, wind)
             g = rollout(env_n, GreedyController(), TEST_SEED + 2)
-            res = {"LUT": summarize(rollout(env_n, LUTController(lut), TEST_SEED + 2), g)}
+            res = {"LUT": summarize(rollout(env_n, LUTController(lut), TEST_SEED + 2), g),
+                   "LUT_filtered": summarize(rollout(env_n, FilteredLUTController(lut, alpha), TEST_SEED + 2), g)}
             for name, (model, pcfg) in policies.items():
                 res[name] = summarize(rollout(make_env(pcfg, n_rob, sim, ref, wind), PolicyController(model), TEST_SEED + 2), g)
             for name, s in res.items():
@@ -254,7 +271,8 @@ def main() -> None:
             cfg_m = replace(cfg, farm=farm)
             env_m = make_env(cfg_m, n_rob, sim_m, ref_m)
             g = rollout(env_m, GreedyController(), TEST_SEED + 3)
-            res = {"LUT": summarize(rollout(env_m, LUTController(lut), TEST_SEED + 3), g)}
+            res = {"LUT": summarize(rollout(env_m, LUTController(lut), TEST_SEED + 3), g),
+                   "LUT_filtered": summarize(rollout(env_m, FilteredLUTController(lut, alpha), TEST_SEED + 3), g)}
             for name, (model, pcfg) in policies.items():
                 env_p = make_env(replace(pcfg, farm=farm), n_rob, sim_m, ref_m)
                 res[name] = summarize(rollout(env_p, PolicyController(model), TEST_SEED + 3), g)

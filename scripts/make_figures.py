@@ -33,6 +33,7 @@ REPORT_FIGS = ROOT / "report" / "figures"
 
 # One fixed colour per controller (categorical slots 1-3; the greedy reference is neutral).
 C_PPO, C_LUT, C_PLAIN, C_GREEDY = "#2a78d6", "#eb6834", "#1baf7a", "#898781"
+C_LUT_LIGHT = "#f5a986"  # tint of the LUT orange for the filtered-LUT variant (also dashed / open markers)
 INK, INK2, GRID, AXIS = "#0b0b0b", "#52514e", "#e1e0d9", "#c3c2b7"
 WAKE_CMAP = LinearSegmentedColormap.from_list(
     "wake", ["#0d366b", "#184f95", "#256abf", "#3987e5", "#6da7ec", "#9ec5f4", "#cde2fb", "#fcfcfb"]
@@ -134,30 +135,68 @@ def fig_flow(direction=275.0, speed=8.0) -> None:
     save(fig, "fig_flow")
 
 
+def training_runs() -> list[dict]:
+    """Every finished run in runs/ with its settings (read from its own config.yaml)."""
+    import yaml
+
+    out = []
+    for cfg_path in sorted(ROOT.glob("runs/*/config.yaml")):
+        run = cfg_path.parent
+        if run.name.startswith("_") or not (run / "progress.csv").exists():
+            continue
+        c = yaml.safe_load(cfg_path.read_text())
+        df = pd.read_csv(run / "progress.csv").dropna(subset=["val_gain_pct"])
+        out.append({
+            "name": run.name, "gamma": c["ppo"]["gamma"], "symmetry": c["ppo"].get("symmetry", False),
+            "default": c["env"].get("observe_powers", True) and c["env"]["yaw_cost"] == 0.005,
+            "steps": df["env_steps"].to_numpy() / 1e6, "gain": df["val_gain_pct"].to_numpy(),
+        })
+    return out
+
+
+def _mean_curve(runs):
+    n = min(len(r["steps"]) for r in runs)
+    return runs[0]["steps"][:n], np.mean([r["gain"][:n] for r in runs], axis=0)
+
+
 def fig_training() -> None:
-    """Validation energy gain during training (fixed validation weather)."""
+    """Validation energy gain during training: (a) symmetry ablation, (b) discount-factor study."""
     ev = json.loads((RESULTS / "evaluation.json").read_text())
-    fig, ax = plt.subplots(figsize=(COL_W, 1.3))
-    curves = []
-    for run in ppo_runs():
-        df = pd.read_csv(ROOT / "runs" / run / "progress.csv").dropna(subset=["val_gain_pct"])
-        curves.append(df[["env_steps", "val_gain_pct"]].to_numpy())
-        ax.plot(df["env_steps"] / 1e6, df["val_gain_pct"], color=C_PPO, lw=0.7, alpha=0.45)
-    n = min(len(c) for c in curves)
-    stack = np.stack([c[:n, 1] for c in curves])
-    steps = curves[0][:n, 0] / 1e6
-    ax.plot(steps, stack.mean(0), color=C_PPO, lw=1.6, label=f"PPO (mean of {len(curves)} seeds; thin: seeds)")
-    for run in sorted(p.parent.name for p in ROOT.glob("runs/ablation_no_symmetry_seed*/policy.pt")):
-        df = pd.read_csv(ROOT / "runs" / run / "progress.csv").dropna(subset=["val_gain_pct"])
-        ax.plot(df["env_steps"] / 1e6, df["val_gain_pct"], color=C_PLAIN, lw=1.2, label="PPO, plain MLP (no symmetry)")
     lut = ev["validation_reference"]["LUT"]
-    ax.axhline(lut, color=C_LUT, lw=1.2, ls=(0, (4, 2)), label="LUT (FLORIS-SR)")
-    ax.axhline(0.0, color=C_GREEDY, lw=1.0, label="Greedy")
-    ax.set_xlabel("environment steps [millions]")
-    ax.set_ylabel("energy gain [%]")
-    ax.set_xlim(0, steps[-1])
-    ax.legend(loc="lower right", ncol=1)
+    runs = [r for r in training_runs() if r["default"]]
+    main_gamma = yaml_gamma(ROOT / "runs" / ppo_runs()[0] / "config.yaml")
+    fig, (a, b) = plt.subplots(1, 2, figsize=(COL_W, 1.45), sharey=True, gridspec_kw={"wspace": 0.08})
+
+    sym = [r for r in runs if r["symmetry"] and r["gamma"] == 0.95]
+    plain = [r for r in runs if not r["symmetry"] and r["gamma"] == 0.95]
+    for group, col, label in [(sym, C_PPO, "C$_4$-symmetric"), (plain, C_PLAIN, "plain MLP")]:
+        if group:
+            for r in group if len(group) > 1 else []:
+                a.plot(r["steps"], r["gain"], color=col, lw=0.6, alpha=0.4)
+            a.plot(*_mean_curve(group), color=col, lw=1.4, label=label)
+    a.set_title("(a) symmetry, $\\gamma$ = 0.95", loc="left", color=INK2, pad=2)
+
+    ramp = {0.0: "#86b6ef", 0.5: "#3987e5", 0.8: "#1c5cab", 0.95: "#0d366b"}  # ordinal: darker = longer horizon
+    for g in sorted({r["gamma"] for r in runs if r["symmetry"]}):
+        group = [r for r in runs if r["symmetry"] and r["gamma"] == g]
+        tag = " (ours)" if g == main_gamma else ""
+        b.plot(*_mean_curve(group), color=ramp.get(g, C_PPO), lw=1.4, label=f"$\\gamma$ = {g:g}{tag}")
+    b.set_title("(b) discount factor", loc="left", color=INK2, pad=2)
+
+    for ax in (a, b):
+        ax.axhline(lut, color=C_LUT, lw=1.1, ls=(0, (4, 2)), label="LUT")
+        ax.axhline(0.0, color=C_GREEDY, lw=0.9)
+        ax.set_xlabel("env. steps [M]")
+        ax.set_xlim(0, 5.0)
+        ax.legend(loc="lower right", fontsize=5.8, handlelength=1.4, borderaxespad=0.2)
+    a.set_ylabel("val. energy gain [%]")
     save(fig, "fig_training")
+
+
+def yaml_gamma(path: Path) -> float:
+    import yaml
+
+    return yaml.safe_load(Path(path).read_text())["ppo"]["gamma"]
 
 
 def fig_sweep(speed_label="8 m/s", turbine=0) -> None:
@@ -194,8 +233,11 @@ def fig_robustness() -> None:
     sig = np.array(nz["sigma_deg"])
     ppo = np.array([nz[r]["gain"] for r in runs])
     a.plot(sig, nz["LUT"]["gain"], color=C_LUT, marker="s", ms=4, label="LUT")
+    if "LUT_filtered" in nz:
+        a.plot(sig, nz["LUT_filtered"]["gain"], color=C_LUT, ls=(0, (3, 1.5)), marker="^", ms=4.5, mfc="white",
+               label="LUT + filter")
     a.errorbar(sig, ppo.mean(0), yerr=ppo.std(0, ddof=1) if len(runs) > 1 else None, color=C_PPO, marker="o", ms=4,
-               capsize=2, lw=1.4, label="PPO")
+               capsize=2, lw=1.4, label="PPO (ours)")
     a.axhline(0, color=C_GREEDY, lw=1.0)
     a.set_xlabel("wind-direction noise $\\sigma$ [deg]")
     a.set_ylabel("energy gain [%]")
@@ -205,11 +247,12 @@ def fig_robustness() -> None:
     labels = list(mm)
     short = {"GCH (training model)": "GCH\n(training)", "Cumulative-curl": "cumulative\ncurl", "GCH, TI = 10%": "GCH,\nTI = 10%"}
     x = np.arange(len(labels))
-    lut_vals = [mm[k]["LUT"] for k in labels]
     ppo_vals = np.array([[mm[k][r] for r in runs] for k in labels])
-    w = 0.36
-    b.bar(x - w / 2 - 0.02, lut_vals, width=w, color=C_LUT)
-    b.bar(x + w / 2 + 0.02, ppo_vals.mean(1), width=w, color=C_PPO,
+    bars = [("LUT", C_LUT)] + ([("LUT_filtered", C_LUT_LIGHT)] if "LUT_filtered" in mm[labels[0]] else [])
+    w = 0.8 / (len(bars) + 1)
+    for j, (key, col) in enumerate(bars):
+        b.bar(x + (j - len(bars) / 2) * (w + 0.02), [mm[k][key] for k in labels], width=w, color=col)
+    b.bar(x + (len(bars) / 2) * (w + 0.02), ppo_vals.mean(1), width=w, color=C_PPO,
           yerr=ppo_vals.std(1, ddof=1) if len(runs) > 1 else None, error_kw=dict(lw=0.8, capsize=2, ecolor=INK2))
     b.axhline(0, color=AXIS, lw=0.6)
     b.set_xticks(x)
@@ -217,8 +260,7 @@ def fig_robustness() -> None:
     b.set_ylabel("energy gain [%]")
     b.grid(axis="x", visible=False)
     handles, names = a.get_legend_handles_labels()
-    fig.legend(handles, [f"{n} (built with GCH, TI 6%)" if n == "LUT" else f"{n} (trained with GCH, TI 6%)" for n in names],
-               loc="lower center", bbox_to_anchor=(0.5, 0.92), ncol=2)
+    fig.legend(handles, names, loc="lower center", bbox_to_anchor=(0.5, 0.92), ncol=len(names))
     save(fig, "fig_robustness")
 
 
@@ -238,16 +280,6 @@ def fig_direction() -> None:
     ax.set_ylabel("energy gain [%]")
     ax.legend(loc="upper left", ncol=2)
     save(fig, "fig_direction")
-
-
-def switch_direction(wd, yaw, window=(262.0, 278.0)):
-    """Wind direction at which the yaw offset changes sign inside ``window`` (linear interpolation)."""
-    wd, yaw = np.asarray(wd), np.asarray(yaw)
-    inside = np.flatnonzero((wd >= window[0]) & (wd <= window[1]))
-    for i, j in zip(inside[:-1], inside[1:]):
-        if np.sign(yaw[i]) != np.sign(yaw[j]) and yaw[i] != 0:
-            return float(wd[i] + (wd[j] - wd[i]) * yaw[i] / (yaw[i] - yaw[j]))
-    return None
 
 
 def fig_hysteresis(turbine=0) -> None:
