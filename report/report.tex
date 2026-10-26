@@ -45,22 +45,21 @@ that LUT with tuned measurement filtering, while yawing \TravelCutVsLUT\% less t
 \end{abstract}
 
 \section{Introduction}
-Large wind farms lose 10--20\% of their energy to wakes~\cite{barthelmie2009}. Yawing an upstream turbine by $\gamma$ costs it roughly a
-$\cos^{1.88}\gamma$ share of its power but bends its wake off the downstream rotors, which can recover far
-more~\cite{bastankhah2016,howland2019,fleming2019}. Choosing the offsets of all turbines is a
-\emph{sequential} problem: the wind drifts and is measured noisily, yaw drives are slow and every degree of
-travel wears them. Offline LUTs~\cite{fleming2022sr} treat each instant in isolation and trust perfect
-models and measurements; RL optimises closed-loop behaviour from interaction~\cite{stanfel2020,dong2021,kadoche2023}.
-\emph{Contributions:} (i) an MDP of dynamic wake steering with realistic sensing and actuation; (ii) a batched,
-Gymnasium-compatible FLORIS environment fast enough for on-policy RL on a laptop; (iii) PPO with a policy that
-is exactly equivariant to the farm's 90$^\circ$ rotation symmetry; (iv) a paired, held-out evaluation against
-greedy and model-based control with ablations and robustness tests.
+Large wind farms lose 10--20\% of their energy to wakes~\cite{barthelmie2009}. Yawing a turbine by $\gamma$
+costs it roughly a $\cos^{1.88}\gamma$ share of its power but bends its wake off downstream rotors, which can
+recover far more~\cite{bastankhah2016,howland2019,fleming2019}. Choosing all offsets is a \emph{sequential}
+problem: the wind drifts and is measured noisily, yaw drives are slow and travel wears them. Offline
+LUTs~\cite{fleming2022sr} treat each instant in isolation and trust perfect models and measurements; RL learns
+closed-loop behaviour from interaction~\cite{stanfel2020,dong2021,kadoche2023}. \emph{Contributions:} (i) an MDP
+of dynamic wake steering with realistic sensing and actuation; (ii) a batched, Gymnasium-compatible FLORIS
+environment fast enough for on-policy RL on a laptop; (iii) PPO with an exactly rotation-equivariant
+policy; (iv) a paired, held-out evaluation against greedy and model-based control with ablations.
 
 \section{MDP Formulation}
 \textbf{Simulator.} Nine NREL 5-MW turbines~\cite{jonkman2009} ($D=126$\,m) on a 3$\times$3 grid with $5D$
-spacing, turbulence intensity (TI) 6\%. Powers come from FLORIS~v4~\cite{floris} with the Gauss--Curl-Hybrid
-model (Gaussian deficit, wake deflection, secondary steering, yaw-added recovery~\cite{king2021}). Step
-$\Delta t=60$\,s; episode $T=60$ steps (one hour).
+spacing, turbulence intensity (TI) 6\%; powers from FLORIS~v4~\cite{floris}, Gauss--Curl-Hybrid model
+(Gaussian deficit, deflection, secondary steering, yaw-added recovery~\cite{king2021}). Step $\Delta t=60$\,s;
+episode $T=60$ steps (one hour).
 
 \textbf{Exogenous wind.} Direction: persistent random walk $\theta_{t+1}=\theta_t+\delta_{t+1}$,
 $\delta_{t+1}=0.7\,\delta_t+0.8^\circ\epsilon_t$, $\theta_0\sim\mathcal U[0^\circ,360^\circ)$. Speed:
@@ -91,40 +90,38 @@ wind, so it shifts every policy's return equally: the optimal policy is unchange
 the $U^3$ power law vanishes. The term with $c=0.005$/deg prices yaw-drive wear and discourages chattering.
 
 \section{Environment, Algorithm and Baselines}
-\textbf{Environment.} A FLORIS call has $\approx$20\,ms fixed overhead, so 256 environments advance in
-lock-step with \emph{one} vectorised FLORIS evaluation per step, split over worker processes (3.8k
-steps/s on an i7-12700H laptop); a Gymnasium interface (\texttt{WakeSteer-v0}) is also provided.
+\textbf{Environment.} A FLORIS call has $\approx$20\,ms overhead, so 256 environments advance in lock-step
+with \emph{one} vectorised FLORIS call per step, split over worker processes (3.8k steps/s on an i7-12700H
+laptop); a Gymnasium interface (\texttt{WakeSteer-v0}) is included.
 
 \textbf{Symmetry-aware policy.} The grid is invariant under 90$^\circ$ rotation and FLORIS works in the wind
 frame, so $P_i(\theta,\boldsymbol\gamma)=P_{\pi(i)}(\theta-90^\circ,\Pi\boldsymbol\gamma)$ for a turbine
 permutation $\pi$ (verified to $10^{-6}$). Each observation is rotated by $k$ quarter turns into the sector
 $\hat\theta-90^\circ k\in[15^\circ,105^\circ)$ (cut where steering gains vanish), turbine features are
-permuted by $\pi^k$, and actions are permuted back: the policy is equivariant by construction and learns
-only a quarter of the wind rose.
+permuted by $\pi^k$ and actions permuted back: the policy is equivariant by construction and learns only a
+quarter of the wind rose.
 
 \textbf{PPO~\cite{schulman2017}.} Gaussian policy, separate 2$\times$256 tanh actor and critic, Fourier
 features $\sin k\theta,\cos k\theta$ ($k\in\{1,2,3,4,8\}$). Clipped surrogate ($\epsilon=0.2$),
 GAE~\cite{schulman2016} ($\lambda=0.9$), 256 envs$\times$30 steps per update, 10 epochs$\times$8 minibatches,
 Adam $3\!\times\!10^{-4}$ (annealed), KL early stop at 0.02, per-network gradient clipping, bootstrapping at
-time-limit truncations, random initial offsets; $3\!\times\!10^6$ steps per run ($\approx$1\,h); the
-checkpoint with the best return on fixed validation weather is kept. The discount $\gamma$ is a training
-hyper-parameter (the objective is undiscounted energy), selected from $\{0,0.5,0.8,0.95\}$ on validation
-weather. PPO fits: actions are continuous and 9-D (a discretised DQN would face $\gg10^8$ joint actions)
-and simulated experience is cheap.
+time-limit truncations, random initial offsets; $3\!\times\!10^6$ steps per run ($\approx$1\,h), keeping the
+checkpoint with the best return on fixed validation weather. The discount $\gamma$ is a training
+hyper-parameter (the objective is undiscounted energy) selected from $\{0,0.5,0.8,0.95\}$ on validation
+weather. PPO fits: actions are continuous and 9-D (a discretised DQN would face $\gg10^8$ joint actions).
 
 \textbf{Baselines.} \emph{Greedy}: zero offsets (industry standard). \emph{LUT}: offsets optimised offline
-with FLORIS' Serial-Refine method~\cite{fleming2022sr} on a $1^\circ\times1$\,m/s grid (3\,960 optimisations)
-using the \emph{same} wake model as the test, applied at the measured wind---a model-based reference with
-perfect model knowledge. \emph{LUT+filter}: the same LUT fed with exponentially smoothed measurements, the
-nacelles tracking the smoothed direction (smoothing factor $\alpha=\AlphaLUTf$ tuned on validation weather).
-\emph{Random} set-points. All share the yaw dynamics and are tested on \NumEpisodes{} one-hour episodes of
-unseen weather, every controller facing \emph{identical} wind (paired comparison).
+by FLORIS' Serial-Refine method~\cite{fleming2022sr} on a $1^\circ\times1$\,m/s grid (3\,960 optimisations)
+with the \emph{same} wake model as the test, applied at the measured wind---perfect model knowledge.
+\emph{LUT+filter}: that LUT fed with exponentially smoothed measurements, the nacelles tracking the smoothed
+direction ($\alpha=\AlphaLUTf$, tuned on validation weather). All share the yaw dynamics and face
+\emph{identical} wind in \NumEpisodes{} one-hour test episodes of unseen weather (paired comparison).
 
 \section{Results}
 \begin{table}[t]
 \centering
-\caption{Held-out test: \NumEpisodes{} one-hour episodes, identical weather for all controllers. Training
-budgets: PPO 3 seeds$\times$3M steps, $\gamma$\,=\,0.95 3 seeds$\times$3.6M, plain MLP 5M, others 3M.}
+\caption{Test on \NumEpisodes{} unseen one-hour episodes (identical weather). Training: PPO 3$\times$3M
+steps, $\gamma$\,=\,0.95 3$\times$3.6M, plain MLP 5M, others 3M.}
 \label{tab:main}
 \setlength{\tabcolsep}{3pt}
 \footnotesize
@@ -140,18 +137,19 @@ Controller & Energy gain & Yaw travel & Side & Reward\\
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{fig_flow}
-\caption{Hub-height flow for wind from $275^\circ$ at 8\,m/s: greedy control vs.\ the settled PPO set-points.}
+\caption{Hub-height flow, wind from $275^\circ$ at 8\,m/s: greedy control vs.\ settled PPO set-points.}
 \label{fig:flow}
 \end{figure}
 
 \textbf{Main result.} PPO ($\gamma=\GammaMain$) gains \GainPPO$\pm$\GainPPOstd\% energy over greedy
-control (mean$\pm$std over \NumSeeds{} seeds; better in \BetterEpisodesPPO\% of episodes), against
-\GainLUT\% for the LUT and \GainLUTf\% for LUT+filter, and earns the highest reward (\RewardPPO{} vs
-\RewardLUT{} and \RewardLUTf) with \TravelPPO$^\circ$ instead of \TravelLUT$^\circ$ yaw travel per
-turbine-hour (Table~\ref{tab:main}, Fig.~\ref{fig:flow}). The raw LUT chases every noisy measurement near
-turbine alignments; the agent instead holds its deflection side: when the wind veers slowly through the
-270$^\circ$ row alignment it switches at \HystPPOfwd$^\circ$ veering right but \HystPPObwd$^\circ$ veering
-left, a \HystPPO$^\circ$ hysteresis band versus \HystLUT$^\circ$ for the LUT (yaw-drive lag only).
+control (std over \NumSeeds{} seeds; random set-points: $-$\GainRandomAbs\%), against \GainLUT\% for the LUT
+and \GainLUTf\% for LUT+filter (Table~\ref{tab:main}, Fig.~\ref{fig:flow}). Paired over identical weather it
+beats LUT+filter by \PairedLUTfDiff$\pm$\PairedLUTfSEM{} percentage points (s.e.; better in
+\PairedLUTfBetter\% of episodes) and the LUT by \PairedLUTDiff$\pm$\PairedLUTSEM{} (\PairedLUTBetter\%),
+yawing \TravelPPO$^\circ$ per turbine-hour instead of \TravelLUT$^\circ$ and \TravelLUTf$^\circ$. The LUT
+chases noisy measurements near alignments; the agent holds its deflection side: as the wind veers slowly
+through the 270$^\circ$ row alignment it switches at \HystPPOfwd$^\circ$ veering right but
+\HystPPObwd$^\circ$ veering left, a \HystPPO$^\circ$ hysteresis band (LUT: \HystLUT$^\circ$, yaw lag only).
 
 \begin{figure}[t]
 \centering
@@ -160,27 +158,24 @@ left, a \HystPPO$^\circ$ hysteresis band versus \HystLUT$^\circ$ for the LUT (ya
 \label{fig:training}
 \end{figure}
 
-\textbf{Learning and ablations.} \emph{Discount:} the best validation rewards were \ValRewardZero,
-\ValRewardHalf, \ValRewardPointEight{} and \ValRewardNinetyFive{} for $\gamma=0$, 0.5, 0.8 and 0.95
-(Fig.~\ref{fig:training}b). Long-horizon returns are dominated by the exogenous wind, whereas a yaw drive
-reaches any set-point within 1--3 steps; a two-step horizon ($\gamma=0.5$) captures the cost of multi-step
-yaw manoeuvres at low variance, and even the myopic agent is close. \emph{Symmetry} (controlled at
-$\gamma=0.95$, Fig.~\ref{fig:training}a): the C$_4$-equivariant policy learns about 3$\times$ faster and
-plateaus higher than a plain MLP (test gain \AblNoSymmetryGain\% vs \AblLongHorizonGain\%).
-\emph{Inputs and reward:} without turbine-power inputs the gain drops to \AblNoPowersGain\%; without the wear
-penalty yaw travel rises to \AblNoYawCostTravel$^\circ$/h (gain \AblNoYawCostGain\%).
+\textbf{Learning and ablations.} \emph{Discount:} best validation rewards were \ValRewardZero,
+\ValRewardHalf, \ValRewardPointEight{} and \ValRewardNinetyFive{} for $\gamma=0$, 0.5, 0.8, 0.95 (test gains
+\GammaZeroGain, \GammaHalfGain, \GammaPointEightGain, \GammaNinetyFiveGain\%; Fig.~\ref{fig:training}b).
+Long-horizon returns are dominated by the exogenous wind while a yaw drive reaches any set-point in 1--3
+steps, so a two-step horizon captures yaw manoeuvres at low variance. \emph{Symmetry} (at $\gamma=0.95$,
+Fig.~\ref{fig:training}a): about 3$\times$ faster learning and a higher plateau than a plain MLP (test
+\AblLongHorizonGain\% vs \AblNoSymmetryGain\%). \emph{Inputs and reward:} without turbine-power
+inputs the gain drops to \AblNoPowersGain\%; without the wear penalty it is unchanged (\AblNoYawCostGain\%) but
+yaw travel rises to \AblNoYawCostTravel$^\circ$/h.
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{fig_sweep}
-\caption{Constant, noise-free wind at 8\,m/s. Top: power gain over greedy. Bottom: yaw offset of corner
-turbine T1. Dips at exact alignments: from neutral yaw both deflection sides are equally good.}
+\caption{Steady, noise-free wind at 8\,m/s: the agent recovers \SSfraction\% of the model-optimal gain
+(\SSppo\% vs \SSoptimal\%) without ever being shown it, including the sign switches of the optimal yaw of
+corner turbine T1 (bottom).}
 \label{fig:sweep}
 \end{figure}
-
-\textbf{What was learned.} In steady wind (Fig.~\ref{fig:sweep}) the agent recovers \SSfraction\% of the
-model-optimal gain (\SSppo\% vs \SSoptimal\% at 8\,m/s) without ever being shown the optimum, including the
-sign switches of the optimal yaw schedule.
 
 \begin{figure}[!b]
 \centering
@@ -189,18 +184,16 @@ sign switches of the optimal yaw schedule.
 \label{fig:robust}
 \end{figure}
 
-\textbf{Robustness} (Fig.~\ref{fig:robust}, no retraining). With perfect direction measurements the raw
-LUT is best (\NoiseLUTZero\% vs \NoisePPOZero\% for PPO), but it collapses as noise grows (\NoiseLUTSix\% at
-$\sigma=6^\circ$; LUT+filter \NoiseLUTfSix\%, PPO \NoisePPOSix\%). Under the cumulative-curl wake model all
-controllers stay profitable (LUT \MismatchCCLUT\%, LUT+filter \MismatchCCLUTf\%, PPO \MismatchCCPPO\%); at
-TI\,=\,10\% gains shrink (\MismatchTILUT\%, \MismatchTILUTf\%, \MismatchTIPPO\%).
+\textbf{Robustness} (Fig.~\ref{fig:robust}). With perfect direction measurements the raw LUT is best
+(\NoiseLUTZero\% vs \NoisePPOZero\%), but it collapses with noise (\NoiseLUTSix\% at $\sigma=6^\circ$) while
+PPO keeps \NoisePPOSix\% (LUT+filter \NoiseLUTfSix\%). Under the cumulative-curl wake model (\MismatchCCLUT,
+\MismatchCCLUTf, \MismatchCCPPO\% for LUT, LUT+filter, PPO) and at TI\,=\,10\% (\MismatchTILUT,
+\MismatchTILUTf, \MismatchTIPPO\%) the ranking is unchanged.
 
 \section{Conclusion}
-PPO trained in FLORIS learns wake steering that outperforms greedy control and model-optimised LUTs (raw and
-filtered) under realistic sensing and actuation, with less yaw activity and \DecisionPPO\,ms decisions
-(online FLORIS optimisation: \DecisionSR\,ms). Encoding the farm's rotation symmetry and a short training
-horizon were key to sample efficiency. Limitations: steady-state wakes (no advection delay), one layout,
-simulated sensors.
+PPO beats greedy control and model-optimised LUTs under realistic sensing and actuation, with less yaw
+travel and \DecisionPPO\,ms decisions (online optimisation: \DecisionSR\,ms). Limitations: steady-state wakes,
+one layout.
 
 \clearpage  % pages 1-2: content; references follow (excluded from the page limit)
 \begin{thebibliography}{10}
