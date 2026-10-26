@@ -185,7 +185,8 @@ class WakeSteeringEnv(gym.Env):
     def __init__(self, farm: FarmConfig = FarmConfig(), wind: WindConfig = WindConfig(), cfg: EnvConfig = EnvConfig()):
         self._vec = WakeSteeringVecEnv(1, farm, wind, cfg)
         n = self._vec.n_turbines
-        self.observation_space = gym.spaces.Box(-np.inf, np.inf, shape=(self._vec.obs_dim,), dtype=np.float32)
+        # Features are O(1) by construction; the box is a generous envelope, not a clip.
+        self.observation_space = gym.spaces.Box(-10.0, 10.0, shape=(self._vec.obs_dim,), dtype=np.float32)
         self.action_space = gym.spaces.Box(-1.0, 1.0, shape=(n,), dtype=np.float32)
 
     def reset(self, *, seed=None, options=None):

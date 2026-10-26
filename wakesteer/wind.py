@@ -24,6 +24,11 @@ class WindConfig:
     speed_noise: float = 0.2  # [m/s]
 
 
+def _stationary_std(innovation: float, ar_coef: float) -> float:
+    """Stationary std of x' = ar_coef * x + innovation * N(0, 1); 0 for non-stationary or noise-free processes."""
+    return innovation / np.sqrt(1.0 - ar_coef**2) if abs(ar_coef) < 1.0 else 0.0
+
+
 class WindProcess:
     """Vectorised wind model for ``n`` independent environments."""
 
@@ -39,12 +44,11 @@ class WindProcess:
         c = self.cfg
         lo, hi = c.direction_range
         self.direction = np.mod(rng.uniform(lo, hi, self.n), 360.0)
-        rho = c.direction_persistence
-        self.trend = rng.normal(0.0, c.direction_innovation / np.sqrt(1.0 - rho**2), self.n)
+        # Start from the stationary distributions (zero spread if a process has none).
+        self.trend = rng.normal(0.0, _stationary_std(c.direction_innovation, c.direction_persistence), self.n)
         self.mean_speed = rng.uniform(*c.mean_speed_range, self.n)
-        k = c.speed_reversion
-        self.speed = self.mean_speed + rng.normal(0.0, c.speed_innovation / np.sqrt(1.0 - (1.0 - k) ** 2), self.n)
-        self.speed = np.clip(self.speed, *c.speed_bounds)
+        spread = _stationary_std(c.speed_innovation, 1.0 - c.speed_reversion)
+        self.speed = np.clip(self.mean_speed + rng.normal(0.0, spread, self.n), *c.speed_bounds)
         # Optional overrides (used for steady-state sweeps).
         if directions is not None:
             self.direction = np.mod(np.broadcast_to(np.asarray(directions, dtype=float), (self.n,)).copy(), 360.0)
