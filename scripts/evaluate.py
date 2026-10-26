@@ -47,6 +47,15 @@ def make_env(cfg, n, sim, ref, wind=None):
     return WakeSteeringVecEnv(n, cfg.farm, wind or cfg.wind, env_cfg, sim, ref)
 
 
+def scored_like(main_cfg, policy_cfg):
+    """Evaluation config for a policy: the main experiment's dynamics and reward, the policy's observation layout.
+
+    Every controller is therefore scored with the same reward (e.g. the no-wear-penalty ablation is still charged
+    for yaw travel at test time).
+    """
+    return replace(main_cfg, env=replace(main_cfg.env, observe_powers=policy_cfg.env.observe_powers))
+
+
 def side_switches_per_turbine_hour(yaw: np.ndarray, threshold: float = 5.0, dt: float = 60.0) -> float:
     """How often a turbine's wake deflection flips side (offset > +thr <-> offset < -thr).
 
@@ -120,11 +129,13 @@ def main() -> None:
         "Random": rollout(env, RandomController(0), TEST_SEED, keys=keys),
     }
     for name, (model, pcfg) in policies.items():
-        trajs[name] = rollout(make_env(pcfg, args.episodes, sim, ref), PolicyController(model), TEST_SEED, keys=keys)
+        trajs[name] = rollout(make_env(scored_like(cfg, pcfg), args.episodes, sim, ref), PolicyController(model),
+                              TEST_SEED, keys=keys)
     for p in ablation_paths:
         model, payload = load_policy(p)
         pcfg = config_from_dict(payload["config"])
-        trajs[p.parent.name] = rollout(make_env(pcfg, args.episodes, sim, ref), PolicyController(model), TEST_SEED, keys=keys)
+        trajs[p.parent.name] = rollout(make_env(scored_like(cfg, pcfg), args.episodes, sim, ref),
+                                       PolicyController(model), TEST_SEED, keys=keys)
     greedy = trajs["Greedy"]
     report["main"] = {name: summarize(tr, greedy) for name, tr in trajs.items()}
     for name, tr in trajs.items():

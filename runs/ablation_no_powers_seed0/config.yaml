@@ -1,0 +1,64 @@
+name: ablation_no_powers
+seed: 0
+n_workers: 4
+eval_every: 10
+eval_episodes: 128
+farm:
+  rows: 3
+  cols: 3
+  spacing_d: 5.0
+  turbine: nrel_5MW
+  turbulence_intensity: 0.06
+  wake_model: gch
+  rotor_grid_points: 3
+wind:
+  direction_persistence: 0.7
+  direction_innovation: 0.8
+  direction_range:
+  - 0.0
+  - 360.0
+  mean_speed_range:
+  - 5.0
+  - 12.0
+  speed_reversion: 0.1
+  speed_innovation: 0.25
+  speed_bounds:
+  - 3.5
+  - 15.0
+  direction_noise: 2.0
+  speed_noise: 0.2
+env:
+  episode_length: 60
+  dt: 60.0
+  yaw_rate: 0.3
+  max_offset: 25.0
+  yaw_cost: 0.005
+  reward_scale: 100.0
+  random_initial_offsets: true
+  observe_powers: false
+ppo:
+  total_steps: 3000000
+  n_envs: 256
+  n_steps: 30
+  learning_rate: 0.0003
+  anneal_lr: true
+  gamma: 0.5
+  gae_lambda: 0.9
+  clip_coef: 0.2
+  update_epochs: 10
+  n_minibatches: 8
+  ent_coef: 0.0
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  target_kl: 0.02
+  hidden_sizes:
+  - 256
+  - 256
+  log_std_init: -0.7
+  direction_harmonics:
+  - 2
+  - 3
+  - 4
+  - 8
+  symmetry: true
+  sector_start: 15.0
